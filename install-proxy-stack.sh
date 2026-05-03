@@ -188,6 +188,15 @@ safe_rm_rf() {
     echo "拒绝删除危险路径: ${target}" >&2
     exit 1
   fi
+  case "$target" in
+    /opt/proxy-stack-*|"${HOME}"/.acme.sh/*_ecc)
+      ;;
+    *)
+      echo "拒绝删除非脚本管理路径: ${target}" >&2
+      echo "如使用了自定义 INSTALL_DIR，请先手动确认路径后自行删除。" >&2
+      exit 1
+      ;;
+  esac
   rm -rf -- "$target"
 }
 
@@ -229,8 +238,6 @@ choose_reality_target() {
     printf '%s:443' "$chosen_sni"
   fi
 }
-
-install_basic_deps
 
 CF_API="https://api.cloudflare.com/client/v4"
 
@@ -398,10 +405,14 @@ cleanup_stack() {
 
   if [ -n "${CF_TOKEN:-}" ]; then
     log "删除 Cloudflare DNS 记录"
-    cf_api GET "/user/tokens/verify" >/dev/null
-    resolve_zone_for_domain
-    delete_dns_records_by_type "A"
-    delete_dns_records_by_type "AAAA"
+    if need_cmd curl && need_cmd python3; then
+      cf_api GET "/user/tokens/verify" >/dev/null
+      resolve_zone_for_domain
+      delete_dns_records_by_type "A"
+      delete_dns_records_by_type "AAAA"
+    else
+      echo "缺少 curl 或 python3，跳过 Cloudflare DNS 清理。"
+    fi
   else
     echo "未提供 CF_TOKEN，跳过 Cloudflare DNS 清理。"
   fi
@@ -425,6 +436,8 @@ if [ "$ACTION" = "cleanup" ]; then
   cleanup_stack
   exit 0
 fi
+
+install_basic_deps
 
 if ! need_cmd docker; then
   echo "未检测到 docker。为了不影响 1Panel，本脚本不自动安装 Docker。请先安装 1Panel 或 Docker 后重试。" >&2

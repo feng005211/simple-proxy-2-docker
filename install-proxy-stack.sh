@@ -286,8 +286,8 @@ generate_reality_keypair() {
   mapfile -t _reality_keypair < <(printf '%s' "$xray_keys" | python3 -c '
 import re, sys
 text = sys.stdin.read()
-priv = re.search(r"Private key:\s*(\S+)", text, re.IGNORECASE)
-pub = re.search(r"Public key:\s*(\S+)", text, re.IGNORECASE)
+priv = re.search(r"Private(?:\s*key)?\s*:\s*(\S+)", text, re.IGNORECASE)
+pub = re.search(r"(?:Public\s*key|Password\s*\(PublicKey\))\s*:\s*(\S+)", text, re.IGNORECASE)
 if not priv or not pub:
     print(text, file=sys.stderr)
     raise SystemExit("无法从 x25519 输出中解析 REALITY 密钥")

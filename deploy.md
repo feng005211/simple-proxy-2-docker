@@ -475,8 +475,8 @@ SECRETS_FILE="${INSTALL_DIR}/secrets.env"
 
 pick_random_sni() {
   python3 - "$REALITY_SNI_POOL" <<'PY'
-import sys, random
-pool = [x.strip() for x in sys.argv[1].split(",") if x.strip()]
+import random, re, sys
+pool = [x.strip() for x in re.split(r'[, \t\r\n]+', sys.argv[1]) if x.strip()]
 if not pool:
     print("www.oracle.com")
 else:

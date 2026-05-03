@@ -222,8 +222,7 @@ PY
   python3 - <<'PY'
 import os, random, re
 pool = os.environ.get('REALITY_SNI_POOL', '')
-items = [x.strip() for x in re.split(r'[,
-\t ]+', pool) if x.strip()]
+items = [x.strip() for x in re.split(r'[, \t\r\n]+', pool) if x.strip()]
 if not items:
     raise SystemExit('REALITY_SNI_POOL 为空，无法随机选择 REALITY SNI')
 print(random.choice(items))

@@ -150,10 +150,17 @@ chmod 600 /root/proxy-global.env
 请使用 GitHub raw 地址下载脚本：
 
 ```bash
-curl -fsSL -o /root/install-proxy-stack.sh \
-  https://raw.githubusercontent.com/feng005211/simple-proxy-2-docker/main/install-proxy-stack.sh
+wget -O /root/install-proxy-stack.sh --no-check-certificate \
+  https://raw.githubusercontent.com/feng005211/simple-proxy-2-docker/main/install-proxy-stack.sh && \
+chmod 700 /root/install-proxy-stack.sh
+```
 
-chmod +x /root/install-proxy-stack.sh
+如果服务器没有 `wget`，也可以使用：
+
+```bash
+curl -fsSL -o /root/install-proxy-stack.sh \
+  https://raw.githubusercontent.com/feng005211/simple-proxy-2-docker/main/install-proxy-stack.sh && \
+chmod 700 /root/install-proxy-stack.sh
 ```
 
 ### 3. 放行端口
@@ -193,6 +200,24 @@ bash /root/install-proxy-stack.sh jp1.example.com 25443 41000-50000
 
 ---
 
+## 附加工具入口
+
+脚本内置了两个附加工具入口：
+
+```bash
+bash /root/install-proxy-stack.sh bbr
+bash /root/install-proxy-stack.sh dd
+```
+
+说明：
+
+- `bbr` 入口会拉起 Linux-NetSpeed 的 `tcpx.sh`
+- `dd` 入口会拉起 Linux-NetSpeed 的 `tcp.sh`
+- 这里的 `dd` 入口对应替换内核版脚本，不是系统重装 DD 工具
+- BBR、DD 脚本用的 [ylx2016] 的成熟作品，地址 [https://github.com/ylx2016/Linux-NetSpeed]，请熟知
+
+---
+
 ## 部署产物
 
 以 `jp1.example.com` 为例，默认安装目录为：
@@ -214,6 +239,9 @@ bash /root/install-proxy-stack.sh jp1.example.com 25443 41000-50000
 | `client-info.txt` | 客户端连接信息汇总，包含 VLESS URI 与单行 Hysteria 2 URI |
 | `clash-client-info.txt` | Mihomo / Clash Meta 可直接使用的 YAML 代理片段 |
 | `clients/hysteria2-client.yaml` | Hysteria 2 客户端配置 |
+
+说明：
+Hysteria 2 的单行分享 URI 默认使用端口跳跃范围的首端口，以提高客户端导入兼容性；YAML 与 Mihomo 配置仍保留完整端口范围。
 
 查看客户端信息：
 

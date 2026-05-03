@@ -218,10 +218,20 @@ chmod 600 /root/proxy-global.env
 
 ## 七、完整自动化部署脚本
 
-创建脚本：
+下载脚本：
 
 ~~~bash
-nano /root/install-proxy-stack.sh
+wget -O /root/install-proxy-stack.sh --no-check-certificate \
+  https://raw.githubusercontent.com/feng005211/simple-proxy-2-docker/main/install-proxy-stack.sh && \
+chmod 700 /root/install-proxy-stack.sh
+~~~
+
+如果服务器没有 `wget`，也可以使用：
+
+~~~bash
+curl -fsSL -o /root/install-proxy-stack.sh \
+  https://raw.githubusercontent.com/feng005211/simple-proxy-2-docker/main/install-proxy-stack.sh && \
+chmod 700 /root/install-proxy-stack.sh
 ~~~
 
 写入以下内容：
@@ -732,7 +742,9 @@ tls sni: ${DOMAIN}
 obfs type: salamander
 obfs password: ${HY2_OBFS_PASSWORD}
 hysteria2 uri:
-hysteria2://your_auth@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=your_obfs_password#${DOMAIN}-hysteria2
+hysteria2://your_auth@${DOMAIN}:40000/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=your_obfs_password#${DOMAIN}-hysteria2
+hysteria2 uri note:
+单行分享链接建议使用跳跃范围的首端口，兼容性通常比直接写 40000-50000 更好
 clash / mihomo yaml:
 ${INSTALL_DIR}/clash-client-info.txt
 
@@ -799,10 +811,10 @@ echo "${INSTALL_DIR}/clients/hysteria2-client.yaml"
 echo
 ~~~
 
-保存后执行：
+验证脚本：
 
 ~~~bash
-chmod +x /root/install-proxy-stack.sh
+bash /root/install-proxy-stack.sh --help
 ~~~
 
 ---
@@ -825,6 +837,22 @@ bash /root/install-proxy-stack.sh jp1.aa.com 24443 40000-50000
 
 ~~~bash
 bash /root/install-proxy-stack.sh jp1.aa.com 25443 41000-50000
+~~~
+
+如果想调用 BBR、DD 附加工具入口：
+
+~~~bash
+bash /root/install-proxy-stack.sh bbr
+bash /root/install-proxy-stack.sh dd
+~~~
+
+说明：
+
+~~~text
+bbr 入口会运行 Linux-NetSpeed 的 tcpx.sh
+dd 入口会运行 Linux-NetSpeed 的 tcp.sh
+这里的 dd 入口对应替换内核版脚本，不是系统重装 DD 工具
+BBR、DD 脚本用的 [ylx2016] 的成熟作品，地址 [https://github.com/ylx2016/Linux-NetSpeed]，请熟知
 ~~~
 
 如果想一键彻底清理某个节点：
@@ -1480,8 +1508,9 @@ chmod 600 /root/proxy-global.env
 创建脚本：
 
 ~~~bash
-nano /root/install-proxy-stack.sh
-chmod +x /root/install-proxy-stack.sh
+wget -O /root/install-proxy-stack.sh --no-check-certificate \
+  https://raw.githubusercontent.com/feng005211/simple-proxy-2-docker/main/install-proxy-stack.sh && \
+chmod 700 /root/install-proxy-stack.sh
 ~~~
 
 部署节点：

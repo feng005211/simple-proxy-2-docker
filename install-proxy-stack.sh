@@ -21,6 +21,9 @@ ENABLE_IPV6="${ENABLE_IPV6:-true}"
 # the script will respect it. Otherwise it will randomly select one item below
 # on first deployment and persist it in secrets.env.
 REALITY_SNI_POOL="${REALITY_SNI_POOL:-www.oracle.com,www.ibm.com,www.samsung.com,www.lg.com,developer.mozilla.org,source.android.com,www.intel.com,www.amd.com,www.lenovo.com,www.dell.com}"
+LINUX_NETSPEED_REPO_URL="https://github.com/ylx2016/Linux-NetSpeed"
+LINUX_NETSPEED_BBR_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcpx.sh"
+LINUX_NETSPEED_DD_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcp.sh"
 
 usage() {
   cat <<USAGE
@@ -29,11 +32,15 @@ Usage:
   bash $0 cleanup <domain>
   bash $0 uninstall <domain>
   bash $0 purge <domain>
+  bash $0 bbr
+  bash $0 dd
 
 Examples:
   bash $0 jp1.example.com
   bash $0 sg1.example.com 24443 40000-50000
   bash $0 cleanup jp1.example.com
+  bash $0 bbr
+  bash $0 dd
 
 Required environment variables, or put them in /root/proxy-global.env:
   EMAIL="you@example.com"
@@ -60,6 +67,8 @@ Notes:
   - Xray uses host network mode to avoid Docker IPv6 bridge limitations.
   - cleanup/uninstall/purge will stop containers, remove local files,
     delete Cloudflare A/AAAA records for the domain, and purge acme.sh cert data.
+  - bbr / dd entries use the mature work by [ylx2016]:
+    https://github.com/ylx2016/Linux-NetSpeed
 USAGE
 }
 
@@ -74,26 +83,32 @@ case "${1:-}" in
     ACTION="cleanup"
     shift
     ;;
+  bbr|dd)
+    ACTION="${1:-}"
+    shift
+    ;;
 esac
 
 DOMAIN="${1:-}"
 XRAY_PORT="${2:-$DEFAULT_XRAY_PORT}"
 HY2_PORT_RANGE="${3:-$DEFAULT_HY2_PORT_RANGE}"
 
-if [ -z "$DOMAIN" ]; then
+if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ] && [ -z "$DOMAIN" ]; then
   usage
   exit 1
 fi
 
-DOMAIN="$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/\.$//')"
-export DOMAIN
-MASQUERADE_URL="${MASQUERADE_URL:-https://${DOMAIN}/}"
-SAFE_DOMAIN="${DOMAIN//./-}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/proxy-stack-${SAFE_DOMAIN}}"
-SECRETS_FILE="${INSTALL_DIR}/secrets.env"
-ACME_CERT_DIR="$HOME/.acme.sh/${DOMAIN}_ecc"
-XRAY_CONTAINER_NAME="xray-reality-xhttp-${SAFE_DOMAIN}"
-HY2_CONTAINER_NAME="hysteria2-hop-${SAFE_DOMAIN}"
+if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ]; then
+  DOMAIN="$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/\.$//')"
+  export DOMAIN
+  MASQUERADE_URL="${MASQUERADE_URL:-https://${DOMAIN}/}"
+  SAFE_DOMAIN="${DOMAIN//./-}"
+  INSTALL_DIR="${INSTALL_DIR:-/opt/proxy-stack-${SAFE_DOMAIN}}"
+  SECRETS_FILE="${INSTALL_DIR}/secrets.env"
+  ACME_CERT_DIR="$HOME/.acme.sh/${DOMAIN}_ecc"
+  XRAY_CONTAINER_NAME="xray-reality-xhttp-${SAFE_DOMAIN}"
+  HY2_CONTAINER_NAME="hysteria2-hop-${SAFE_DOMAIN}"
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "请使用 root 执行：sudo bash $0 $DOMAIN $XRAY_PORT $HY2_PORT_RANGE" >&2
@@ -110,6 +125,7 @@ if [ "$ACTION" = "install" ] && [ -z "${CF_TOKEN:-}" ]; then
   exit 1
 fi
 
+if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ]; then
 python3 - "$ACTION" "$DOMAIN" "$XRAY_PORT" "$HY2_PORT_RANGE" <<'PY'
 import re, sys
 _, action, domain, xray_port, hy2_range = sys.argv
@@ -128,6 +144,7 @@ if action == "install":
     if not (1 <= a <= b <= 65535):
         raise SystemExit(f"Hysteria 端口范围不正确: {hy2_range}")
 PY
+fi
 
 log() {
   echo
@@ -158,6 +175,30 @@ install_basic_deps() {
     yum install -y curl openssl python3 ca-certificates
   else
     echo "无法自动安装依赖，请先安装: curl openssl python3 ca-certificates" >&2
+    exit 1
+  fi
+}
+
+install_fetch_deps() {
+  local missing=()
+  for cmd in ca-certificates; do
+    :
+  done
+
+  if need_cmd curl || need_cmd wget; then
+    return 0
+  fi
+
+  log "安装下载依赖"
+  if need_cmd apt-get; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl wget
+  elif need_cmd dnf; then
+    dnf install -y ca-certificates curl wget
+  elif need_cmd yum; then
+    yum install -y ca-certificates curl wget
+  else
+    echo "无法自动安装下载依赖，请先安装 curl 或 wget 后重试。" >&2
     exit 1
   fi
 }
@@ -236,6 +277,34 @@ choose_reality_target() {
   else
     printf '%s:443' "$chosen_sni"
   fi
+}
+
+download_remote_script() {
+  local url="$1"
+  local target="$2"
+  if need_cmd wget; then
+    wget -O "$target" --no-check-certificate "$url"
+  elif need_cmd curl; then
+    curl -fsSL -o "$target" "$url"
+  else
+    install_fetch_deps
+    download_remote_script "$url" "$target"
+  fi
+}
+
+run_external_tool() {
+  local tool_name="$1"
+  local script_url="$2"
+  local target_path="/tmp/$(basename "$script_url")"
+
+  log "启动 ${tool_name} 工具"
+  echo "BBR、DD 脚本用的 [ylx2016] 的成熟作品，地址 [${LINUX_NETSPEED_REPO_URL}]，请熟知。"
+  echo "提示：这里的 dd 入口对应 Linux-NetSpeed 的替换内核版脚本，不是系统重装 DD 工具。"
+  echo "即将下载并运行：${script_url}"
+
+  download_remote_script "$script_url" "$target_path"
+  chmod 700 "$target_path"
+  "$target_path"
 }
 
 CF_API="https://api.cloudflare.com/client/v4"
@@ -433,6 +502,16 @@ cleanup_stack() {
 
 if [ "$ACTION" = "cleanup" ]; then
   cleanup_stack
+  exit 0
+fi
+
+if [ "$ACTION" = "bbr" ]; then
+  run_external_tool "BBR" "$LINUX_NETSPEED_BBR_URL"
+  exit 0
+fi
+
+if [ "$ACTION" = "dd" ]; then
+  run_external_tool "DD" "$LINUX_NETSPEED_DD_URL"
   exit 0
 fi
 
@@ -724,9 +803,10 @@ PY_URLENCODED_PATH="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '1p')"
 HY2_AUTH_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '2p')"
 HY2_OBFS_PASSWORD_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '3p')"
 HY2_TAG_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '4p')"
+HY2_URI_PORT="${HY2_PORT_RANGE%%-*}"
 TAG="${DOMAIN}-vless-reality-xhttp"
 VLESS_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${PY_URLENCODED_PATH}#${TAG}"
-HY2_URI="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}#${HY2_TAG_ENCODED}"
+HY2_URI="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_URI_PORT}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}#${HY2_TAG_ENCODED}"
 CLASH_VLESS_NAME="${DOMAIN}-vless-reality-xhttp"
 CLASH_HY2_NAME="${DOMAIN}-hysteria2"
 
@@ -825,6 +905,7 @@ Obfs type: salamander
 Obfs password: ${HY2_OBFS_PASSWORD}
 Hysteria 2 URI:
 ${HY2_URI}
+Hysteria 2 URI note: single-port share link for compatibility; YAML / Clash keep the full hopping range.
 Client YAML: ${INSTALL_DIR}/clients/hysteria2-client.yaml
 Clash / Mihomo YAML: ${INSTALL_DIR}/clash-client-info.txt
 

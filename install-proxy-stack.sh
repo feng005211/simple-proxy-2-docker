@@ -16,6 +16,17 @@ ENV_FILE="/root/proxy-global.env"
 DEFAULT_XRAY_PORT="${DEFAULT_XRAY_PORT:-24443}"
 DEFAULT_HY2_PORT_RANGE="${DEFAULT_HY2_PORT_RANGE:-40000-50000}"
 ENABLE_IPV6="${ENABLE_IPV6:-true}"
+HY2_BANDWIDTH_UP="${HY2_BANDWIDTH_UP:-1 gbps}"
+HY2_BANDWIDTH_DOWN="${HY2_BANDWIDTH_DOWN:-1 gbps}"
+HY2_CLIENT_BANDWIDTH_UP="${HY2_CLIENT_BANDWIDTH_UP:-1 gbps}"
+HY2_CLIENT_BANDWIDTH_DOWN="${HY2_CLIENT_BANDWIDTH_DOWN:-1 gbps}"
+HY2_QUIC_INIT_STREAM_WINDOW="${HY2_QUIC_INIT_STREAM_WINDOW:-8388608}"
+HY2_QUIC_MAX_STREAM_WINDOW="${HY2_QUIC_MAX_STREAM_WINDOW:-16777216}"
+HY2_QUIC_INIT_CONN_WINDOW="${HY2_QUIC_INIT_CONN_WINDOW:-20971520}"
+HY2_QUIC_MAX_CONN_WINDOW="${HY2_QUIC_MAX_CONN_WINDOW:-41943040}"
+HY2_MAX_IDLE_TIMEOUT="${HY2_MAX_IDLE_TIMEOUT:-60s}"
+HY2_SYSCTL_RMEM_MAX="${HY2_SYSCTL_RMEM_MAX:-16777216}"
+HY2_SYSCTL_WMEM_MAX="${HY2_SYSCTL_WMEM_MAX:-16777216}"
 
 # Optional. If REALITY_SNI or REALITY_TARGET is set in /root/proxy-global.env,
 # the script will respect it. Otherwise it will randomly select one item below
@@ -51,6 +62,10 @@ Optional environment variables:
   DEFAULT_XRAY_PORT="24443"
   DEFAULT_HY2_PORT_RANGE="40000-50000"
   ENABLE_IPV6="true"                 # true/false; true means create AAAA when IPv6 is detected
+  HY2_BANDWIDTH_UP="1 gbps"          # Hysteria 2 server-side upload cap per client
+  HY2_BANDWIDTH_DOWN="1 gbps"        # Hysteria 2 server-side download cap per client
+  HY2_CLIENT_BANDWIDTH_UP="1 gbps"   # default value written into Hysteria client templates
+  HY2_CLIENT_BANDWIDTH_DOWN="1 gbps" # default value written into Hysteria client templates
   PUBLIC_IPV4="1.2.3.4"              # override auto-detected IPv4
   PUBLIC_IPV6="2001:db8::1234"       # override auto-detected IPv6
   PUBLIC_IP="1.2.3.4"                # backward-compatible IPv4 override
@@ -206,6 +221,27 @@ install_fetch_deps() {
     echo "无法自动安装下载依赖，请先安装 curl 或 wget 后重试。" >&2
     exit 1
   fi
+}
+
+apply_hysteria_sysctl_tuning() {
+  local sysctl_file="/etc/sysctl.d/99-proxy-stack-hysteria.conf"
+
+  if ! need_cmd sysctl; then
+    echo "未检测到 sysctl，跳过 Hysteria 性能 sysctl 优化。" >&2
+    return 0
+  fi
+
+  log "应用 Hysteria 性能优化 sysctl"
+  cat > "$sysctl_file" <<EOF
+# Managed by install-proxy-stack.sh
+# Recommended by Hysteria 2 performance guide for larger UDP socket buffers.
+net.core.rmem_max=${HY2_SYSCTL_RMEM_MAX}
+net.core.wmem_max=${HY2_SYSCTL_WMEM_MAX}
+EOF
+
+  sysctl -w "net.core.rmem_max=${HY2_SYSCTL_RMEM_MAX}" >/dev/null
+  sysctl -w "net.core.wmem_max=${HY2_SYSCTL_WMEM_MAX}" >/dev/null
+  echo "已写入 ${sysctl_file}"
 }
 
 json_escape() {
@@ -658,6 +694,8 @@ chmod 700 "${INSTALL_DIR}"
 
 echo "INSTALL_DIR=${INSTALL_DIR}"
 
+apply_hysteria_sysctl_tuning
+
 log "生成或复用密钥与 REALITY 目标"
 if [ ! -f "$SECRETS_FILE" ]; then
   XRAY_UUID="$(docker run --rm ghcr.io/xtls/xray-core:latest uuid)"
@@ -833,12 +871,16 @@ masquerade:
     rewriteHost: true
 
 quic:
-  initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
-  initConnReceiveWindow: 20971520
-  maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
+  initStreamReceiveWindow: ${HY2_QUIC_INIT_STREAM_WINDOW}
+  maxStreamReceiveWindow: ${HY2_QUIC_MAX_STREAM_WINDOW}
+  initConnReceiveWindow: ${HY2_QUIC_INIT_CONN_WINDOW}
+  maxConnReceiveWindow: ${HY2_QUIC_MAX_CONN_WINDOW}
+  maxIdleTimeout: ${HY2_MAX_IDLE_TIMEOUT}
   maxIncomingStreams: 1024
+
+bandwidth:
+  up: ${HY2_BANDWIDTH_UP}
+  down: ${HY2_BANDWIDTH_DOWN}
 HY2
 
 log "生成客户端配置说明"
@@ -850,10 +892,62 @@ print(quote("${HY2_OBFS_PASSWORD}", safe=''))
 print(quote("${DOMAIN}-hysteria2", safe=''))
 PY
 )"
+PY_HY2_BANDWIDTH_FIELDS="$(python3 - "$HY2_CLIENT_BANDWIDTH_UP" "$HY2_CLIENT_BANDWIDTH_DOWN" <<'PY'
+import re
+import sys
+
+UNITS = {
+    "bps": 1 / 1_000_000,
+    "b": 1 / 1_000_000,
+    "kbps": 1 / 1_000,
+    "kb": 1 / 1_000,
+    "k": 1 / 1_000,
+    "mbps": 1,
+    "mb": 1,
+    "m": 1,
+    "gbps": 1_000,
+    "gb": 1_000,
+    "g": 1_000,
+    "tbps": 1_000_000,
+    "tb": 1_000_000,
+    "t": 1_000_000,
+}
+
+def to_mbps(raw: str) -> float:
+    text = raw.strip().lower()
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)\s*([a-z]+)", text)
+    if not match:
+        raise SystemExit(f"无法解析 Hysteria 带宽值: {raw}")
+    value = float(match.group(1))
+    unit = match.group(2)
+    if unit not in UNITS:
+        raise SystemExit(f"不支持的 Hysteria 带宽单位: {raw}")
+    return value * UNITS[unit]
+
+def to_human(mbps: float) -> str:
+    if mbps >= 1000 and abs(mbps % 1000) < 1e-9:
+        return f"{int(mbps / 1000)} Gbps"
+    if abs(mbps - round(mbps)) < 1e-9:
+        return f"{int(round(mbps))} Mbps"
+    return f"{mbps:g} Mbps"
+
+for raw in sys.argv[1:]:
+    mbps = to_mbps(raw)
+    if abs(mbps - round(mbps)) < 1e-9:
+        print(int(round(mbps)))
+    else:
+        print(f"{mbps:g}")
+    print(to_human(mbps))
+PY
+)"
 PY_URLENCODED_PATH="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '1p')"
 HY2_AUTH_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '2p')"
 HY2_OBFS_PASSWORD_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '3p')"
 HY2_TAG_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '4p')"
+HY2_CLIENT_UP_MBPS="$(printf '%s\n' "$PY_HY2_BANDWIDTH_FIELDS" | sed -n '1p')"
+HY2_CLIENT_UP_HUMAN="$(printf '%s\n' "$PY_HY2_BANDWIDTH_FIELDS" | sed -n '2p')"
+HY2_CLIENT_DOWN_MBPS="$(printf '%s\n' "$PY_HY2_BANDWIDTH_FIELDS" | sed -n '3p')"
+HY2_CLIENT_DOWN_HUMAN="$(printf '%s\n' "$PY_HY2_BANDWIDTH_FIELDS" | sed -n '4p')"
 HY2_URI_PORT="${HY2_PORT_RANGE%%-*}"
 HY2_HAS_PORT_RANGE=0
 HY2_SINGBOX_PORTS=""
@@ -891,8 +985,8 @@ fi
 cat >> "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
 
 bandwidth:
-  up: 50 mbps
-  down: 200 mbps
+  up: ${HY2_CLIENT_BANDWIDTH_UP}
+  down: ${HY2_CLIENT_BANDWIDTH_DOWN}
 HY2CLIENT
 
 cat > "${INSTALL_DIR}/sing-box-client-info.json" <<SINGBOX
@@ -927,8 +1021,8 @@ cat >> "${INSTALL_DIR}/sing-box-client-info.json" <<SINGBOX
           "h3"
         ]
       },
-      "up_mbps": 50,
-      "down_mbps": 200
+      "up_mbps": ${HY2_CLIENT_UP_MBPS},
+      "down_mbps": ${HY2_CLIENT_DOWN_MBPS}
     }
   ]
 }
@@ -972,8 +1066,8 @@ if [ "$HY2_HAS_PORT_RANGE" = "1" ]; then
 CLASH
 fi
 cat >> "${INSTALL_DIR}/clash-client-info.txt" <<CLASH
-    up: "50 Mbps"
-    down: "200 Mbps"
+    up: "${HY2_CLIENT_UP_HUMAN}"
+    down: "${HY2_CLIENT_DOWN_HUMAN}"
 CLASH
 
 cat > "${INSTALL_DIR}/client-info.txt" <<INFO
@@ -1009,11 +1103,13 @@ Auth password: ${HY2_PASSWORD}
 TLS SNI: ${DOMAIN}
 Obfs type: salamander
 Obfs password: ${HY2_OBFS_PASSWORD}
+Bandwidth limit: up ${HY2_BANDWIDTH_UP} / down ${HY2_BANDWIDTH_DOWN}
 Hysteria 2 Share URI:
 ${HY2_SHARE_URI}
 Hysteria 2 Official Client YAML: ${INSTALL_DIR}/clients/hysteria2-client.yaml
 Sing-box JSON: ${INSTALL_DIR}/sing-box-client-info.json
 Clash / Mihomo YAML: ${INSTALL_DIR}/clash-client-info.txt
+Applied sysctl tuning: net.core.rmem_max=${HY2_SYSCTL_RMEM_MAX}, net.core.wmem_max=${HY2_SYSCTL_WMEM_MAX}
 
 ========== Useful Commands ==========
 cd ${INSTALL_DIR} && docker compose ps

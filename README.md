@@ -281,12 +281,21 @@ bash install-proxy-stack.sh purge <domain>
 | `CF_TOKEN` | 是 | 无 | Cloudflare API Token |
 | `DEFAULT_XRAY_PORT` | 否 | `24443` | 默认 Xray TCP 端口 |
 | `DEFAULT_HY2_PORT_RANGE` | 否 | `40000-50000` | 默认 Hysteria 2 单端口或 UDP 范围 |
+| `HY2_BANDWIDTH_UP` | 否 | `1 gbps` | Hysteria 2 服务端每客户端上行带宽上限 |
+| `HY2_BANDWIDTH_DOWN` | 否 | `1 gbps` | Hysteria 2 服务端每客户端下行带宽上限 |
+| `HY2_CLIENT_BANDWIDTH_UP` | 否 | `1 gbps` | 写入客户端模板的默认上行带宽 |
+| `HY2_CLIENT_BANDWIDTH_DOWN` | 否 | `1 gbps` | 写入客户端模板的默认下行带宽 |
 | `ENABLE_IPV6` | 否 | `true` | 为 `true` 时自动探测 IPv6 并写入 AAAA |
 | `PUBLIC_IPV4` | 否 | 自动探测 | 手动指定公网 IPv4 |
 | `PUBLIC_IPV6` | 否 | 自动探测 | 手动指定公网 IPv6 |
 | `PUBLIC_IP` | 否 | 空 | 兼容旧变量，等价于 IPv4 覆盖 |
 | `INSTALL_DIR` | 否 | `/opt/proxy-stack-<domain>` | 自定义安装目录 |
 | `MASQUERADE_URL` | 否 | `https://<domain>/` | Hysteria 2 masquerade 代理地址 |
+| `HY2_MAX_IDLE_TIMEOUT` | 否 | `60s` | Hysteria 2 QUIC 空闲超时 |
+| `HY2_QUIC_MAX_STREAM_WINDOW` | 否 | `16777216` | Hysteria 2 单流最大接收窗口 |
+| `HY2_QUIC_MAX_CONN_WINDOW` | 否 | `41943040` | Hysteria 2 连接最大接收窗口 |
+| `HY2_SYSCTL_RMEM_MAX` | 否 | `16777216` | 安装时写入 `net.core.rmem_max` |
+| `HY2_SYSCTL_WMEM_MAX` | 否 | `16777216` | 安装时写入 `net.core.wmem_max` |
 | `REALITY_SNI` | 否 | 随机选择 | 固定 REALITY serverName |
 | `REALITY_TARGET` | 否 | `<REALITY_SNI>:443` | 固定 REALITY 回落目标 |
 | `REALITY_SNI_POOL` | 否 | 内置候选池 | 未指定 `REALITY_SNI` 时随机选择 |
@@ -390,6 +399,9 @@ bash /root/install-proxy-stack.sh purge jp1.example.com
 - Cloudflare 记录必须保持 DNS only 灰云；普通橙云代理不适合直接代理这些端口。
 - 不要多台 VPS 共用同一个节点域名，否则 DNS 会被最后一次部署覆盖。
 - 云厂商安全组和系统防火墙都要放行 TCP 与 UDP 端口，IPv6 入站规则也要单独确认。
+- Hysteria 2 现在默认写入 `1 gbps` 带宽模板；如果客户端真实链路明显低于这个值，建议按实际网络下调，避免 Brutal 带宽提示过高反而引发抖动。
+- 脚本会按 Hysteria 官方性能文档写入 `net.core.rmem_max=16777216` 和 `net.core.wmem_max=16777216`；如宿主机已有更高值，可保留更高配置。
+- Hysteria 的 QUIC 接收窗口已较默认值上调；若机器内存很小，可以通过环境变量把窗口改回更保守的值。
 - 妥善保管 `secrets.env`、`client-info.txt` 和客户端 YAML，它们包含可直接连接的敏感信息。
 - 生产环境建议锁定 Docker 镜像版本，不长期依赖 `latest`。
 - 重新运行安装脚本会复用已有 `secrets.env`，不会随便更换 UUID、REALITY 密钥和 Hysteria 密码。
@@ -433,6 +445,19 @@ curl -6 https://api64.ipify.org
 ### Hysteria 2 只看到一个 UDP 端口
 
 这是端口跳跃的常见表现。Hysteria 2 通常只直接监听范围内的起始端口，其余端口可能通过 nftables / iptables 规则处理。
+
+### Hysteria 2 速度偏慢
+
+优先检查：
+
+- 客户端是否使用了脚本生成的最新 Hysteria 配置，而不是旧的低带宽模板。
+- 云厂商安全组和系统防火墙是否完整放行了整个 UDP 端口范围，而不是只放首端口。
+- 宿主机是否已经应用 `net.core.rmem_max=16777216` 与 `net.core.wmem_max=16777216`。
+
+如果你要进一步微调，可以参考 Hysteria 官方文档：
+
+- [性能优化](https://v2.hysteria.network/zh/docs/advanced/Performance/)
+- [完整服务端配置](https://v2.hysteria.network/zh/docs/advanced/Full-Server-Config/)
 
 ### 客户端无法连接 VLESS
 

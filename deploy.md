@@ -681,11 +681,15 @@ masquerade:
 
 quic:
   initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 16777216
   initConnReceiveWindow: 20971520
-  maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
+  maxConnReceiveWindow: 41943040
+  maxIdleTimeout: 60s
   maxIncomingStreams: 1024
+
+bandwidth:
+  up: 1 gbps
+  down: 1 gbps
 HY2
 
 cat > "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
@@ -708,8 +712,8 @@ transport:
     maxHopInterval: 45s
 
 bandwidth:
-  up: 50 mbps
-  down: 200 mbps
+  up: 1 gbps
+  down: 1 gbps
 HY2CLIENT
 
 cat > "${INSTALL_DIR}/client-info.txt" <<INFO
@@ -975,8 +979,8 @@ transport:
     maxHopInterval: 45s
 
 bandwidth:
-  up: 50 mbps
-  down: 200 mbps
+  up: 1 gbps
+  down: 1 gbps
 ~~~
 
 ---

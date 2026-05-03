@@ -279,6 +279,65 @@ choose_reality_target() {
   fi
 }
 
+generate_reality_keypair() {
+  local xray_keys
+  xray_keys="$(docker run --rm ghcr.io/xtls/xray-core:latest x25519)"
+
+  mapfile -t _reality_keypair < <(printf '%s' "$xray_keys" | python3 -c '
+import re, sys
+text = sys.stdin.read()
+priv = re.search(r"Private key:\s*(\S+)", text, re.IGNORECASE)
+pub = re.search(r"Public key:\s*(\S+)", text, re.IGNORECASE)
+if not priv or not pub:
+    print(text, file=sys.stderr)
+    raise SystemExit("无法从 x25519 输出中解析 REALITY 密钥")
+print(priv.group(1))
+print(pub.group(1))
+')
+
+  REALITY_PRIVATE_KEY="${_reality_keypair[0]:-}"
+  REALITY_PUBLIC_KEY="${_reality_keypair[1]:-}"
+
+  if [ -z "$REALITY_PRIVATE_KEY" ] || [ -z "$REALITY_PUBLIC_KEY" ]; then
+    echo "生成 REALITY 密钥失败：privateKey/publicKey 为空" >&2
+    exit 1
+  fi
+}
+
+write_secrets_file() {
+  cat > "$SECRETS_FILE" <<SECRETS
+XRAY_UUID="${XRAY_UUID}"
+REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY}"
+REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY}"
+SHORT_ID="${SHORT_ID}"
+XHTTP_PATH="${XHTTP_PATH}"
+HY2_PASSWORD="${HY2_PASSWORD}"
+HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD}"
+REALITY_SNI_CHOSEN="${REALITY_SNI_CHOSEN}"
+REALITY_TARGET_CHOSEN="${REALITY_TARGET_CHOSEN}"
+SECRETS
+  chmod 600 "$SECRETS_FILE"
+}
+
+regenerate_broken_secrets_if_needed() {
+  if [ -n "${XRAY_UUID:-}" ] && [ -n "${REALITY_PRIVATE_KEY:-}" ] && [ -n "${REALITY_PUBLIC_KEY:-}" ] && \
+     [ -n "${SHORT_ID:-}" ] && [ -n "${XHTTP_PATH:-}" ] && [ -n "${HY2_PASSWORD:-}" ] && \
+     [ -n "${HY2_OBFS_PASSWORD:-}" ]; then
+    return 0
+  fi
+
+  echo "检测到 secrets.env 缺少关键字段，自动重新生成缺失密钥与凭据"
+  XRAY_UUID="${XRAY_UUID:-$(docker run --rm ghcr.io/xtls/xray-core:latest uuid)}"
+  generate_reality_keypair
+  SHORT_ID="${SHORT_ID:-$(openssl rand -hex 8)}"
+  XHTTP_PATH="${XHTTP_PATH:-/$(openssl rand -hex 10)}"
+  HY2_PASSWORD="${HY2_PASSWORD:-$(openssl rand -hex 24)}"
+  HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD:-$(openssl rand -hex 24)}"
+  REALITY_SNI_CHOSEN="${REALITY_SNI_CHOSEN:-$(choose_reality_sni)}"
+  REALITY_TARGET_CHOSEN="${REALITY_TARGET_CHOSEN:-$(choose_reality_target "$REALITY_SNI_CHOSEN")}"
+  write_secrets_file
+}
+
 download_remote_script() {
   local url="$1"
   local target="$2"
@@ -597,45 +656,32 @@ echo "INSTALL_DIR=${INSTALL_DIR}"
 log "生成或复用密钥与 REALITY 目标"
 if [ ! -f "$SECRETS_FILE" ]; then
   XRAY_UUID="$(docker run --rm ghcr.io/xtls/xray-core:latest uuid)"
-  XRAY_KEYS="$(docker run --rm ghcr.io/xtls/xray-core:latest x25519)"
-  REALITY_PRIVATE_KEY="$(echo "$XRAY_KEYS" | awk '/Private key:/ {print $3}')"
-  REALITY_PUBLIC_KEY="$(echo "$XRAY_KEYS" | awk '/Public key:/ {print $3}')"
+  generate_reality_keypair
   SHORT_ID="$(openssl rand -hex 8)"
   XHTTP_PATH="/$(openssl rand -hex 10)"
   HY2_PASSWORD="$(openssl rand -hex 24)"
   HY2_OBFS_PASSWORD="$(openssl rand -hex 24)"
   REALITY_SNI_CHOSEN="$(choose_reality_sni)"
   REALITY_TARGET_CHOSEN="$(choose_reality_target "$REALITY_SNI_CHOSEN")"
-
-  cat > "$SECRETS_FILE" <<SECRETS
-XRAY_UUID="${XRAY_UUID}"
-REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY}"
-REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY}"
-SHORT_ID="${SHORT_ID}"
-XHTTP_PATH="${XHTTP_PATH}"
-HY2_PASSWORD="${HY2_PASSWORD}"
-HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD}"
-REALITY_SNI_CHOSEN="${REALITY_SNI_CHOSEN}"
-REALITY_TARGET_CHOSEN="${REALITY_TARGET_CHOSEN}"
-SECRETS
-  chmod 600 "$SECRETS_FILE"
+  write_secrets_file
   echo "已生成新密钥，并选择 REALITY SNI: ${REALITY_SNI_CHOSEN}"
 else
   echo "检测到已有 secrets.env，复用旧密钥"
 fi
 # shellcheck disable=SC1090
 source "$SECRETS_FILE"
+regenerate_broken_secrets_if_needed
 
-# Backward compatibility for older secrets.env files created by v1.
+# Backward compatibility for older or partially broken secrets.env files.
 if [ -z "${REALITY_SNI_CHOSEN:-}" ]; then
   REALITY_SNI_CHOSEN="$(choose_reality_sni)"
-  REALITY_TARGET_CHOSEN="$(choose_reality_target "$REALITY_SNI_CHOSEN")"
-  cat >> "$SECRETS_FILE" <<SECRETS
-REALITY_SNI_CHOSEN="${REALITY_SNI_CHOSEN}"
-REALITY_TARGET_CHOSEN="${REALITY_TARGET_CHOSEN}"
-SECRETS
   echo "已为旧配置补充 REALITY SNI: ${REALITY_SNI_CHOSEN}"
 fi
+if [ -z "${REALITY_TARGET_CHOSEN:-}" ]; then
+  REALITY_TARGET_CHOSEN="$(choose_reality_target "$REALITY_SNI_CHOSEN")"
+  echo "已为旧配置补充 REALITY target: ${REALITY_TARGET_CHOSEN}"
+fi
+write_secrets_file
 
 REALITY_SNI="$REALITY_SNI_CHOSEN"
 REALITY_TARGET="$REALITY_TARGET_CHOSEN"

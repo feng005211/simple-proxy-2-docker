@@ -236,12 +236,15 @@ bash /root/install-proxy-stack.sh dd
 | `certs/fullchain.pem` | acme.sh 安装的证书链 |
 | `certs/privkey.pem` | acme.sh 安装的私钥 |
 | `secrets.env` | UUID、REALITY 密钥、Hysteria 密码等敏感参数 |
-| `client-info.txt` | 客户端连接信息汇总，包含 VLESS URI 与单行 Hysteria 2 URI |
+| `client-info.txt` | 客户端连接信息汇总，包含 VLESS URI 与官方 Hysteria 2 URI |
 | `clash-client-info.txt` | Mihomo / Clash Meta 可直接使用的 YAML 代理片段 |
+| `sing-box-client-info.json` | sing-box 可直接使用的 Hysteria 2 JSON 片段 |
 | `clients/hysteria2-client.yaml` | Hysteria 2 客户端配置 |
 
 说明：
-Hysteria 2 的单行分享 URI 默认使用端口跳跃范围的首端口，以提高客户端导入兼容性；YAML 与 Mihomo 配置仍保留完整端口范围。
+Hysteria 2 官方支持在地址或 URI 中直接使用多端口格式，例如 `example.com:40000-50000`。
+因此本项目现在区分三类客户端输出：
+官方 Hysteria 使用官方 URI / 官方 YAML，sing-box 使用 `server_port + server_ports`，Mihomo 使用 `port + ports`。
 
 查看客户端信息：
 
@@ -256,7 +259,7 @@ cat /opt/proxy-stack-jp1-example-com/client-info.txt
 ### 命令行参数
 
 ```bash
-bash install-proxy-stack.sh <domain> [xray_tcp_port] [hysteria_udp_range]
+bash install-proxy-stack.sh <domain> [xray_tcp_port] [hysteria_udp_port_or_range]
 bash install-proxy-stack.sh cleanup <domain>
 bash install-proxy-stack.sh uninstall <domain>
 bash install-proxy-stack.sh purge <domain>
@@ -266,7 +269,7 @@ bash install-proxy-stack.sh purge <domain>
 |---|---:|---|---|
 | `domain` | 是 | 无 | 节点域名，例如 `jp1.example.com` |
 | `xray_tcp_port` | 否 | `24443` | Xray VLESS + REALITY + XHTTP 监听端口 |
-| `hysteria_udp_range` | 否 | `40000-50000` | Hysteria 2 UDP 端口跳跃范围 |
+| `hysteria_udp_port_or_range` | 否 | `40000-50000` | Hysteria 2 单端口或端口跳跃范围 |
 
 ### 环境变量
 
@@ -277,7 +280,7 @@ bash install-proxy-stack.sh purge <domain>
 | `EMAIL` | 是 | 无 | acme.sh 注册与证书申请邮箱 |
 | `CF_TOKEN` | 是 | 无 | Cloudflare API Token |
 | `DEFAULT_XRAY_PORT` | 否 | `24443` | 默认 Xray TCP 端口 |
-| `DEFAULT_HY2_PORT_RANGE` | 否 | `40000-50000` | 默认 Hysteria 2 UDP 范围 |
+| `DEFAULT_HY2_PORT_RANGE` | 否 | `40000-50000` | 默认 Hysteria 2 单端口或 UDP 范围 |
 | `ENABLE_IPV6` | 否 | `true` | 为 `true` 时自动探测 IPv6 并写入 AAAA |
 | `PUBLIC_IPV4` | 否 | 自动探测 | 手动指定公网 IPv4 |
 | `PUBLIC_IPV6` | 否 | 自动探测 | 手动指定公网 IPv6 |

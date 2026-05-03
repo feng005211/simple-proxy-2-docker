@@ -741,10 +741,12 @@ auth: ${HY2_PASSWORD}
 tls sni: ${DOMAIN}
 obfs type: salamander
 obfs password: ${HY2_OBFS_PASSWORD}
-hysteria2 uri:
-hysteria2://your_auth@${DOMAIN}:40000/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=your_obfs_password#${DOMAIN}-hysteria2
-hysteria2 uri note:
-单行分享链接建议使用跳跃范围的首端口，兼容性通常比直接写 40000-50000 更好
+hysteria2 official uri:
+hysteria2://your_auth@${DOMAIN}:40000-50000/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=your_obfs_password#${DOMAIN}-hysteria2
+hysteria2 official yaml:
+${INSTALL_DIR}/clients/hysteria2-client.yaml
+sing-box json:
+${INSTALL_DIR}/sing-box-client-info.json
 clash / mihomo yaml:
 ${INSTALL_DIR}/clash-client-info.txt
 
@@ -837,6 +839,12 @@ bash /root/install-proxy-stack.sh jp1.aa.com 24443 40000-50000
 
 ~~~bash
 bash /root/install-proxy-stack.sh jp1.aa.com 25443 41000-50000
+~~~
+
+如果想使用 Hysteria 2 单端口模式：
+
+~~~bash
+bash /root/install-proxy-stack.sh hk1.aa.com 24443 10001
 ~~~
 
 如果想调用 BBR、DD 附加工具入口：
@@ -958,20 +966,10 @@ cat /opt/proxy-stack-jp1-aa-com/clients/hysteria2-client.yaml
 大致格式：
 
 ~~~yaml
-server: jp1.aa.com:40000-50000
-
-auth: 自动生成的密码
-
-tls:
-  sni: jp1.aa.com
-  insecure: false
-
-obfs:
-  type: salamander
-  salamander:
-    password: 自动生成的 obfs 密码
+server: "hysteria2://your_auth@jp1.aa.com:40000-50000/?sni=jp1.aa.com&insecure=0&obfs=salamander&obfs-password=your_obfs_password"
 
 transport:
+  type: udp
   udp:
     minHopInterval: 15s
     maxHopInterval: 45s

@@ -28,7 +28,7 @@ LINUX_NETSPEED_DD_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcp.
 usage() {
   cat <<USAGE
 Usage:
-  bash $0 <domain> [xray_tcp_port] [hysteria_udp_range]
+  bash $0 <domain> [xray_tcp_port] [hysteria_udp_port_or_range]
   bash $0 cleanup <domain>
   bash $0 uninstall <domain>
   bash $0 purge <domain>
@@ -38,6 +38,7 @@ Usage:
 Examples:
   bash $0 jp1.example.com
   bash $0 sg1.example.com 24443 40000-50000
+  bash $0 hk1.example.com 24443 10001
   bash $0 cleanup jp1.example.com
   bash $0 bbr
   bash $0 dd
@@ -92,6 +93,7 @@ esac
 DOMAIN="${1:-}"
 XRAY_PORT="${2:-$DEFAULT_XRAY_PORT}"
 HY2_PORT_RANGE="${3:-$DEFAULT_HY2_PORT_RANGE}"
+HY2_UFW_PORT_SPEC="${HY2_PORT_RANGE/-/:}"
 
 if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ] && [ -z "$DOMAIN" ]; then
   usage
@@ -138,11 +140,14 @@ if action == "install":
             raise ValueError
     except ValueError:
         raise SystemExit(f"Xray 端口不正确: {xray_port}")
-    if not re.fullmatch(r"\d{1,5}-\d{1,5}", hy2_range):
-        raise SystemExit(f"Hysteria 端口范围格式不正确: {hy2_range}")
-    a, b = map(int, hy2_range.split("-"))
+    if re.fullmatch(r"\d{1,5}", hy2_range):
+        a = b = int(hy2_range)
+    elif re.fullmatch(r"\d{1,5}-\d{1,5}", hy2_range):
+        a, b = map(int, hy2_range.split("-"))
+    else:
+        raise SystemExit(f"Hysteria 端口或范围格式不正确: {hy2_range}")
     if not (1 <= a <= b <= 65535):
-        raise SystemExit(f"Hysteria 端口范围不正确: {hy2_range}")
+        raise SystemExit(f"Hysteria 端口或范围不正确: {hy2_range}")
 PY
 fi
 
@@ -850,35 +855,82 @@ HY2_AUTH_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '2p')"
 HY2_OBFS_PASSWORD_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '3p')"
 HY2_TAG_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '4p')"
 HY2_URI_PORT="${HY2_PORT_RANGE%%-*}"
+HY2_HAS_PORT_RANGE=0
+HY2_SINGBOX_PORTS=""
+HY2_MIHOMO_PORT_FIELD="port: ${HY2_URI_PORT}"
+if [[ "$HY2_PORT_RANGE" == *-* ]]; then
+  HY2_HAS_PORT_RANGE=1
+  HY2_SINGBOX_PORTS="${HY2_PORT_RANGE/-/:}"
+  HY2_MIHOMO_PORT_FIELD="$(cat <<PORTS
+port: ${HY2_URI_PORT}
+    ports: ${HY2_PORT_RANGE}
+PORTS
+)"
+fi
 TAG="${DOMAIN}-vless-reality-xhttp"
 VLESS_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${PY_URLENCODED_PATH}#${TAG}"
-HY2_URI="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_URI_PORT}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}#${HY2_TAG_ENCODED}"
+HY2_URI_BASE="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}"
+HY2_URI="${HY2_URI_BASE}#${HY2_TAG_ENCODED}"
 CLASH_VLESS_NAME="${DOMAIN}-vless-reality-xhttp"
 CLASH_HY2_NAME="${DOMAIN}-hysteria2"
 
 cat > "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
-server: ${DOMAIN}:${HY2_PORT_RANGE}
-auth: ${HY2_PASSWORD}
-
-tls:
-  sni: ${DOMAIN}
-  insecure: false
-
-obfs:
-  type: salamander
-  salamander:
-    password: ${HY2_OBFS_PASSWORD}
-
+server: "${HY2_URI_BASE}"
+HY2CLIENT
+if [ "$HY2_HAS_PORT_RANGE" = "1" ]; then
+  cat >> "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
 transport:
   type: udp
   udp:
     minHopInterval: 15s
     maxHopInterval: 45s
+HY2CLIENT
+fi
+cat >> "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
 
 bandwidth:
   up: 50 mbps
   down: 200 mbps
 HY2CLIENT
+
+cat > "${INSTALL_DIR}/sing-box-client-info.json" <<SINGBOX
+{
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "${CLASH_HY2_NAME}",
+      "server": "${DOMAIN}",
+      "server_port": ${HY2_URI_PORT},
+SINGBOX
+if [ "$HY2_HAS_PORT_RANGE" = "1" ]; then
+  cat >> "${INSTALL_DIR}/sing-box-client-info.json" <<SINGBOX
+      "server_ports": [
+        "${HY2_SINGBOX_PORTS}"
+      ],
+      "hop_interval": "15s",
+      "hop_interval_max": "45s",
+SINGBOX
+fi
+cat >> "${INSTALL_DIR}/sing-box-client-info.json" <<SINGBOX
+      "password": "${HY2_PASSWORD}",
+      "obfs": {
+        "type": "salamander",
+        "password": "${HY2_OBFS_PASSWORD}"
+      },
+      "tls": {
+        "enabled": true,
+        "server_name": "${DOMAIN}",
+        "insecure": false,
+        "alpn": [
+          "h3"
+        ]
+      },
+      "up_mbps": 50,
+      "down_mbps": 200
+    }
+  ]
+}
+SINGBOX
 
 cat > "${INSTALL_DIR}/clash-client-info.txt" <<CLASH
 proxies:
@@ -903,7 +955,7 @@ proxies:
   - name: "${CLASH_HY2_NAME}"
     type: hysteria2
     server: ${DOMAIN}
-    ports: ${HY2_PORT_RANGE}
+    ${HY2_MIHOMO_PORT_FIELD}
     password: ${HY2_PASSWORD}
     obfs: salamander
     obfs-password: ${HY2_OBFS_PASSWORD}
@@ -911,7 +963,13 @@ proxies:
     skip-cert-verify: false
     alpn:
       - h3
+CLASH
+if [ "$HY2_HAS_PORT_RANGE" = "1" ]; then
+  cat >> "${INSTALL_DIR}/clash-client-info.txt" <<CLASH
     hop-interval: 30
+CLASH
+fi
+cat >> "${INSTALL_DIR}/clash-client-info.txt" <<CLASH
     up: "50 Mbps"
     down: "200 Mbps"
 CLASH
@@ -949,10 +1007,10 @@ Auth password: ${HY2_PASSWORD}
 TLS SNI: ${DOMAIN}
 Obfs type: salamander
 Obfs password: ${HY2_OBFS_PASSWORD}
-Hysteria 2 URI:
+Hysteria 2 Official URI:
 ${HY2_URI}
-Hysteria 2 URI note: single-port share link for compatibility; YAML / Clash keep the full hopping range.
-Client YAML: ${INSTALL_DIR}/clients/hysteria2-client.yaml
+Hysteria 2 Official Client YAML: ${INSTALL_DIR}/clients/hysteria2-client.yaml
+Sing-box JSON: ${INSTALL_DIR}/sing-box-client-info.json
 Clash / Mihomo YAML: ${INSTALL_DIR}/clash-client-info.txt
 
 ========== Useful Commands ==========
@@ -961,7 +1019,7 @@ cd ${INSTALL_DIR} && docker compose logs -f --tail=100
 cd ${INSTALL_DIR} && docker compose pull && docker compose up -d
 cat ${INSTALL_DIR}/client-info.txt
 INFO
-chmod 600 "${INSTALL_DIR}/client-info.txt" "${INSTALL_DIR}/clients/hysteria2-client.yaml" "${INSTALL_DIR}/clash-client-info.txt"
+chmod 600 "${INSTALL_DIR}/client-info.txt" "${INSTALL_DIR}/clients/hysteria2-client.yaml" "${INSTALL_DIR}/clash-client-info.txt" "${INSTALL_DIR}/sing-box-client-info.json"
 
 log "启动服务"
 cd "$INSTALL_DIR"
@@ -981,7 +1039,7 @@ echo "  UDP ${HY2_PORT_RANGE}"
 echo
 echo "如果使用 ufw，可以参考："
 echo "  ufw allow ${XRAY_PORT}/tcp"
-echo "  ufw allow ${HY2_PORT_RANGE}/udp"
+echo "  ufw allow ${HY2_UFW_PORT_SPEC}/udp"
 echo
 echo "IPv6 说明："
 echo "  如果已检测到 Public IPv6，脚本已同步 AAAA 记录；请确认 VPS 安全组和系统防火墙同样允许 IPv6 入站。"

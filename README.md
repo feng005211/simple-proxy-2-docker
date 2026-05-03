@@ -138,6 +138,8 @@ CF_TOKEN="your_cloudflare_api_token"
 
 DEFAULT_XRAY_PORT="24443"
 DEFAULT_XRAY_VISION_PORT="23333"
+XRAY_RUN_UID="65532"
+XRAY_RUN_GID="65532"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
 
 ENABLE_IPV6="true"
@@ -287,6 +289,8 @@ bash install-proxy-stack.sh purge <domain>
 | `CF_TOKEN` | 是 | 无 | Cloudflare API Token |
 | `DEFAULT_XRAY_PORT` | 否 | `24443` | 默认 Xray TCP 端口 |
 | `DEFAULT_XRAY_VISION_PORT` | 否 | `23333` | 默认 Xray VLESS + TCP + TLS + Vision 端口 |
+| `XRAY_RUN_UID` | 否 | `65532` | Xray 容器运行 UID，同时用于证书私钥 owner |
+| `XRAY_RUN_GID` | 否 | `65532` | Xray 容器运行 GID，同时用于证书私钥 group |
 | `DEFAULT_HY2_PORT_RANGE` | 否 | `40000-50000` | 默认 Hysteria 2 单端口或 UDP 范围 |
 | `HY2_BANDWIDTH_UP` | 否 | `1 gbps` | Hysteria 2 服务端每客户端上行带宽上限 |
 | `HY2_BANDWIDTH_DOWN` | 否 | `1 gbps` | Hysteria 2 服务端每客户端下行带宽上限 |
@@ -316,6 +320,8 @@ CF_TOKEN="your_cloudflare_api_token"
 
 DEFAULT_XRAY_PORT="24443"
 DEFAULT_XRAY_VISION_PORT="23333"
+XRAY_RUN_UID="65532"
+XRAY_RUN_GID="65532"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
 ENABLE_IPV6="true"
 

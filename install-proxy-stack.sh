@@ -15,6 +15,8 @@ ENV_FILE="/root/proxy-global.env"
 
 DEFAULT_XRAY_PORT="${DEFAULT_XRAY_PORT:-24443}"
 DEFAULT_XRAY_VISION_PORT="${DEFAULT_XRAY_VISION_PORT:-23333}"
+XRAY_RUN_UID="${XRAY_RUN_UID:-65532}"
+XRAY_RUN_GID="${XRAY_RUN_GID:-65532}"
 DEFAULT_HY2_PORT_RANGE="${DEFAULT_HY2_PORT_RANGE:-40000-50000}"
 ENABLE_IPV6="${ENABLE_IPV6:-true}"
 HY2_BANDWIDTH_UP="${HY2_BANDWIDTH_UP:-1 gbps}"
@@ -62,6 +64,8 @@ Required environment variables, or put them in /root/proxy-global.env:
 Optional environment variables:
   DEFAULT_XRAY_PORT="24443"
   DEFAULT_XRAY_VISION_PORT="23333"
+  XRAY_RUN_UID="65532"
+  XRAY_RUN_GID="65532"
   DEFAULT_HY2_PORT_RANGE="40000-50000"
   ENABLE_IPV6="true"                 # true/false; true means create AAAA when IPv6 is detected
   HY2_BANDWIDTH_UP="1 gbps"          # Hysteria 2 server-side upload cap per client
@@ -762,9 +766,11 @@ fi
 "$ACME" --install-cert -d "$DOMAIN" --ecc \
   --fullchain-file "${INSTALL_DIR}/certs/fullchain.pem" \
   --key-file "${INSTALL_DIR}/certs/privkey.pem" \
-  --reloadcmd "cd ${INSTALL_DIR} && docker compose restart hysteria >/dev/null 2>&1 || true"
+  --reloadcmd "chown ${XRAY_RUN_UID}:${XRAY_RUN_GID} ${INSTALL_DIR}/certs/fullchain.pem ${INSTALL_DIR}/certs/privkey.pem && chmod 644 ${INSTALL_DIR}/certs/fullchain.pem && chmod 640 ${INSTALL_DIR}/certs/privkey.pem && cd ${INSTALL_DIR} && docker compose restart xray hysteria >/dev/null 2>&1 || true"
 
-chmod 600 "${INSTALL_DIR}/certs/privkey.pem"
+chown "${XRAY_RUN_UID}:${XRAY_RUN_GID}" "${INSTALL_DIR}/certs/fullchain.pem" "${INSTALL_DIR}/certs/privkey.pem"
+chmod 644 "${INSTALL_DIR}/certs/fullchain.pem"
+chmod 640 "${INSTALL_DIR}/certs/privkey.pem"
 
 log "写入 docker-compose.yml"
 cat > "${INSTALL_DIR}/docker-compose.yml" <<COMPOSE
@@ -774,6 +780,7 @@ services:
     container_name: xray-reality-xhttp-${SAFE_DOMAIN}
     restart: unless-stopped
     network_mode: "host"
+    user: "${XRAY_RUN_UID}:${XRAY_RUN_GID}"
     volumes:
       - ./xray/config.json:/etc/xray/config.json:ro
       - ./certs:/certs:ro

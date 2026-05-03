@@ -26,10 +26,14 @@ usage() {
   cat <<USAGE
 Usage:
   bash $0 <domain> [xray_tcp_port] [hysteria_udp_range]
+  bash $0 cleanup <domain>
+  bash $0 uninstall <domain>
+  bash $0 purge <domain>
 
 Examples:
   bash $0 jp1.example.com
   bash $0 sg1.example.com 24443 40000-50000
+  bash $0 cleanup jp1.example.com
 
 Required environment variables, or put them in /root/proxy-global.env:
   EMAIL="you@example.com"
@@ -54,6 +58,8 @@ Notes:
   - Cloudflare DNS records are forced to DNS only / gray cloud.
   - Hysteria 2 uses UDP port hopping only within the selected range.
   - Xray uses host network mode to avoid Docker IPv6 bridge limitations.
+  - cleanup/uninstall/purge will stop containers, remove local files,
+    delete Cloudflare A/AAAA records for the domain, and purge acme.sh cert data.
 USAGE
 }
 
@@ -61,6 +67,14 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
   usage
   exit 0
 fi
+
+ACTION="install"
+case "${1:-}" in
+  cleanup|uninstall|purge)
+    ACTION="cleanup"
+    shift
+    ;;
+esac
 
 DOMAIN="${1:-}"
 XRAY_PORT="${2:-$DEFAULT_XRAY_PORT}"
@@ -76,38 +90,43 @@ export DOMAIN
 MASQUERADE_URL="${MASQUERADE_URL:-https://${DOMAIN}/}"
 SAFE_DOMAIN="${DOMAIN//./-}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/proxy-stack-${SAFE_DOMAIN}}"
+SECRETS_FILE="${INSTALL_DIR}/secrets.env"
+ACME_CERT_DIR="$HOME/.acme.sh/${DOMAIN}_ecc"
+XRAY_CONTAINER_NAME="xray-reality-xhttp-${SAFE_DOMAIN}"
+HY2_CONTAINER_NAME="hysteria2-hop-${SAFE_DOMAIN}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "请使用 root 执行：sudo bash $0 $DOMAIN $XRAY_PORT $HY2_PORT_RANGE" >&2
   exit 1
 fi
 
-if [ -z "${EMAIL:-}" ]; then
+if [ "$ACTION" = "install" ] && [ -z "${EMAIL:-}" ]; then
   echo "缺少 EMAIL。请在 /root/proxy-global.env 里填写 EMAIL=\"你的邮箱\"" >&2
   exit 1
 fi
 
-if [ -z "${CF_TOKEN:-}" ]; then
+if [ "$ACTION" = "install" ] && [ -z "${CF_TOKEN:-}" ]; then
   echo "缺少 CF_TOKEN。请在 /root/proxy-global.env 里填写 CF_TOKEN=\"Cloudflare API Token\"" >&2
   exit 1
 fi
 
-python3 - "$DOMAIN" "$XRAY_PORT" "$HY2_PORT_RANGE" <<'PY'
+python3 - "$ACTION" "$DOMAIN" "$XRAY_PORT" "$HY2_PORT_RANGE" <<'PY'
 import re, sys
-_, domain, xray_port, hy2_range = sys.argv
+_, action, domain, xray_port, hy2_range = sys.argv
 if not re.fullmatch(r"(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", domain):
     raise SystemExit(f"域名格式不正确: {domain}")
-try:
-    p = int(xray_port)
-    if not 1 <= p <= 65535:
-        raise ValueError
-except ValueError:
-    raise SystemExit(f"Xray 端口不正确: {xray_port}")
-if not re.fullmatch(r"\d{1,5}-\d{1,5}", hy2_range):
-    raise SystemExit(f"Hysteria 端口范围格式不正确: {hy2_range}")
-a, b = map(int, hy2_range.split("-"))
-if not (1 <= a <= b <= 65535):
-    raise SystemExit(f"Hysteria 端口范围不正确: {hy2_range}")
+if action == "install":
+    try:
+        p = int(xray_port)
+        if not 1 <= p <= 65535:
+            raise ValueError
+    except ValueError:
+        raise SystemExit(f"Xray 端口不正确: {xray_port}")
+    if not re.fullmatch(r"\d{1,5}-\d{1,5}", hy2_range):
+        raise SystemExit(f"Hysteria 端口范围格式不正确: {hy2_range}")
+    a, b = map(int, hy2_range.split("-"))
+    if not (1 <= a <= b <= 65535):
+        raise SystemExit(f"Hysteria 端口范围不正确: {hy2_range}")
 PY
 
 log() {
@@ -163,6 +182,15 @@ sys.exit(0 if obj.version == version else 1)
 PY
 }
 
+safe_rm_rf() {
+  local target="$1"
+  if [ -z "$target" ] || [ "$target" = "/" ]; then
+    echo "拒绝删除危险路径: ${target}" >&2
+    exit 1
+  fi
+  rm -rf -- "$target"
+}
+
 choose_reality_sni() {
   if [ -n "${REALITY_SNI:-}" ]; then
     printf '%s' "$REALITY_SNI"
@@ -203,16 +231,6 @@ choose_reality_target() {
 }
 
 install_basic_deps
-
-if ! need_cmd docker; then
-  echo "未检测到 docker。为了不影响 1Panel，本脚本不自动安装 Docker。请先安装 1Panel 或 Docker 后重试。" >&2
-  exit 1
-fi
-
-if ! docker compose version >/dev/null 2>&1; then
-  echo "未检测到 docker compose 插件。请先安装 Docker Compose plugin 后重试。" >&2
-  exit 1
-fi
 
 CF_API="https://api.cloudflare.com/client/v4"
 
@@ -295,6 +313,129 @@ print(max(0, len(j.get("result", [])) - 1))
   fi
 }
 
+delete_dns_records_by_type() {
+  local record_type="$1"
+  local records_json
+  records_json="$(cf_api GET "/zones/${ZONE_ID}/dns_records?type=${record_type}&name=${DOMAIN}")"
+  printf '%s' "$records_json" | python3 -c '
+import json, sys
+j = json.load(sys.stdin)
+for r in j.get("result", []):
+    print(r.get("id", ""))
+' | while IFS= read -r record_id; do
+    [ -n "$record_id" ] || continue
+    cf_api DELETE "/zones/${ZONE_ID}/dns_records/${record_id}" >/dev/null
+    echo "已删除 ${record_type} 记录: ${DOMAIN}"
+  done
+}
+
+resolve_zone_for_domain() {
+  log "自动识别 Cloudflare Zone"
+  ZONES_JSON="$(cf_api GET "/zones?per_page=100")"
+  ZONE_ID="$(printf '%s' "$ZONES_JSON" | python3 -c '
+import json, os, sys
+DOMAIN = os.environ["DOMAIN"].rstrip(".")
+j = json.load(sys.stdin)
+matches = []
+for z in j.get("result", []):
+    name = z.get("name", "").rstrip(".")
+    if DOMAIN == name or DOMAIN.endswith("." + name):
+        matches.append((len(name), z.get("id", ""), name))
+if matches:
+    matches.sort(reverse=True)
+    print(matches[0][1])
+' )"
+  ZONE_NAME="$(printf '%s' "$ZONES_JSON" | python3 -c '
+import json, os, sys
+DOMAIN = os.environ["DOMAIN"].rstrip(".")
+j = json.load(sys.stdin)
+matches = []
+for z in j.get("result", []):
+    name = z.get("name", "").rstrip(".")
+    if DOMAIN == name or DOMAIN.endswith("." + name):
+        matches.append((len(name), z.get("id", ""), name))
+if matches:
+    matches.sort(reverse=True)
+    print(matches[0][2])
+' )"
+
+  if [ -z "${ZONE_ID:-}" ]; then
+    echo "没有在 Cloudflare Token 权限内找到 ${DOMAIN} 对应的 Zone。" >&2
+    echo "请确认 Token 有根域名的 Zone Read + DNS Edit 权限。" >&2
+    exit 1
+  fi
+
+  echo "ZONE_NAME=${ZONE_NAME}"
+  echo "ZONE_ID=${ZONE_ID}"
+}
+
+cleanup_stack() {
+  log "开始彻底清理 ${DOMAIN}"
+  echo "INSTALL_DIR=${INSTALL_DIR}"
+
+  if need_cmd docker; then
+    if docker compose version >/dev/null 2>&1 && [ -f "${INSTALL_DIR}/docker-compose.yml" ]; then
+      log "停止并删除 Compose 服务"
+      (
+        cd "${INSTALL_DIR}"
+        docker compose down --remove-orphans -v || true
+      )
+    else
+      log "尝试删除已知容器"
+      docker rm -f "${XRAY_CONTAINER_NAME}" "${HY2_CONTAINER_NAME}" >/dev/null 2>&1 || true
+    fi
+  else
+    echo "未检测到 docker，跳过容器清理。"
+  fi
+
+  if [ -d "${INSTALL_DIR}" ]; then
+    log "删除安装目录"
+    safe_rm_rf "${INSTALL_DIR}"
+    echo "已删除 ${INSTALL_DIR}"
+  else
+    echo "安装目录不存在，跳过本地文件清理。"
+  fi
+
+  if [ -n "${CF_TOKEN:-}" ]; then
+    log "删除 Cloudflare DNS 记录"
+    cf_api GET "/user/tokens/verify" >/dev/null
+    resolve_zone_for_domain
+    delete_dns_records_by_type "A"
+    delete_dns_records_by_type "AAAA"
+  else
+    echo "未提供 CF_TOKEN，跳过 Cloudflare DNS 清理。"
+  fi
+
+  if [ -x "$HOME/.acme.sh/acme.sh" ]; then
+    log "清理 acme.sh 证书与续期配置"
+    "$HOME/.acme.sh/acme.sh" --remove -d "$DOMAIN" --ecc >/dev/null 2>&1 || true
+  fi
+  if [ -d "$ACME_CERT_DIR" ]; then
+    safe_rm_rf "$ACME_CERT_DIR"
+    echo "已删除 ${ACME_CERT_DIR}"
+  else
+    echo "未发现 acme.sh 域名目录，跳过。"
+  fi
+
+  echo
+  echo "清理完成：${DOMAIN}"
+}
+
+if [ "$ACTION" = "cleanup" ]; then
+  cleanup_stack
+  exit 0
+fi
+
+if ! need_cmd docker; then
+  echo "未检测到 docker。为了不影响 1Panel，本脚本不自动安装 Docker。请先安装 1Panel 或 Docker 后重试。" >&2
+  exit 1
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+  echo "未检测到 docker compose 插件。请先安装 Docker Compose plugin 后重试。" >&2
+  exit 1
+fi
+
 log "验证 Cloudflare Token"
 cf_api GET "/user/tokens/verify" >/dev/null
 
@@ -325,43 +466,7 @@ fi
 echo "PUBLIC_IPV4=${PUBLIC_IPV4:-未检测到}"
 echo "PUBLIC_IPV6=${PUBLIC_IPV6:-未检测到或未启用}"
 
-log "自动识别 Cloudflare Zone"
-ZONES_JSON="$(cf_api GET "/zones?per_page=100")"
-ZONE_ID="$(printf '%s' "$ZONES_JSON" | python3 -c '
-import json, os, sys
-DOMAIN = os.environ["DOMAIN"].rstrip(".")
-j = json.load(sys.stdin)
-matches = []
-for z in j.get("result", []):
-    name = z.get("name", "").rstrip(".")
-    if DOMAIN == name or DOMAIN.endswith("." + name):
-        matches.append((len(name), z.get("id", ""), name))
-if matches:
-    matches.sort(reverse=True)
-    print(matches[0][1])
-' )"
-ZONE_NAME="$(printf '%s' "$ZONES_JSON" | python3 -c '
-import json, os, sys
-DOMAIN = os.environ["DOMAIN"].rstrip(".")
-j = json.load(sys.stdin)
-matches = []
-for z in j.get("result", []):
-    name = z.get("name", "").rstrip(".")
-    if DOMAIN == name or DOMAIN.endswith("." + name):
-        matches.append((len(name), z.get("id", ""), name))
-if matches:
-    matches.sort(reverse=True)
-    print(matches[0][2])
-' )"
-
-if [ -z "$ZONE_ID" ]; then
-  echo "没有在 Cloudflare Token 权限内找到 ${DOMAIN} 对应的 Zone。" >&2
-  echo "请确认 Token 有根域名的 Zone Read + DNS Edit 权限。" >&2
-  exit 1
-fi
-
-echo "ZONE_NAME=${ZONE_NAME}"
-echo "ZONE_ID=${ZONE_ID}"
+resolve_zone_for_domain
 
 log "检查同名 CNAME 冲突"
 CONFLICTS_JSON="$(cf_api GET "/zones/${ZONE_ID}/dns_records?name=${DOMAIN}")"
@@ -399,7 +504,6 @@ chmod 700 "${INSTALL_DIR}"
 echo "INSTALL_DIR=${INSTALL_DIR}"
 
 log "生成或复用密钥与 REALITY 目标"
-SECRETS_FILE="${INSTALL_DIR}/secrets.env"
 if [ ! -f "$SECRETS_FILE" ]; then
   XRAY_UUID="$(docker run --rm ghcr.io/xtls/xray-core:latest uuid)"
   XRAY_KEYS="$(docker run --rm ghcr.io/xtls/xray-core:latest x25519)"

@@ -823,6 +823,19 @@ bash /root/install-proxy-stack.sh jp1.aa.com 24443 40000-50000
 bash /root/install-proxy-stack.sh jp1.aa.com 25443 41000-50000
 ~~~
 
+如果想一键彻底清理某个节点：
+
+~~~bash
+bash /root/install-proxy-stack.sh cleanup jp1.aa.com
+~~~
+
+也兼容下面两个别名：
+
+~~~bash
+bash /root/install-proxy-stack.sh uninstall jp1.aa.com
+bash /root/install-proxy-stack.sh purge jp1.aa.com
+~~~
+
 ---
 
 ## 九、部署完成后的文件位置
@@ -1249,15 +1262,17 @@ REALITY SNI
 如果你真的想重置所有客户端参数，可以停止服务后删除：
 
 ~~~bash
-cd /opt/proxy-stack-jp1-aa-com
-docker compose down
-
-rm -f /opt/proxy-stack-jp1-aa-com/secrets.env
-
+bash /root/install-proxy-stack.sh cleanup jp1.aa.com
 bash /root/install-proxy-stack.sh jp1.aa.com
 ~~~
 
-注意：重置后旧客户端全部失效。
+注意：
+
+~~~text
+清理后旧客户端全部失效
+Cloudflare A/AAAA 记录会被一起删除
+acme.sh 中该域名证书也会被一起清掉
+~~~
 
 ---
 
@@ -1266,19 +1281,23 @@ bash /root/install-proxy-stack.sh jp1.aa.com
 以 `jp1.aa.com` 为例：
 
 ~~~bash
-cd /opt/proxy-stack-jp1-aa-com
-docker compose down
-cd /
-rm -rf /opt/proxy-stack-jp1-aa-com
+bash /root/install-proxy-stack.sh cleanup jp1.aa.com
 ~~~
 
-Cloudflare DNS 记录不会自动删除。
-
-如需删除，需要到 Cloudflare 后台手动删除：
+该命令会自动执行：
 
 ~~~text
-A     jp1.aa.com
-AAAA  jp1.aa.com
+停止并删除 Docker Compose 服务
+删除 /opt/proxy-stack-对应域名 目录
+删除 Cloudflare 中该域名的 A / AAAA 记录
+删除 ~/.acme.sh/该域名_ecc 证书目录
+~~~
+
+说明：
+
+~~~text
+如果没有提供 CF_TOKEN，则会跳过 Cloudflare DNS 清理
+cleanup / uninstall / purge 三个命令等价
 ~~~
 
 或者自行通过 API 删除。

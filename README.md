@@ -211,7 +211,8 @@ bash /root/install-proxy-stack.sh jp1.example.com 25443 41000-50000
 | `certs/fullchain.pem` | acme.sh 安装的证书链 |
 | `certs/privkey.pem` | acme.sh 安装的私钥 |
 | `secrets.env` | UUID、REALITY 密钥、Hysteria 密码等敏感参数 |
-| `client-info.txt` | 客户端连接信息汇总 |
+| `client-info.txt` | 客户端连接信息汇总，包含 VLESS URI 与单行 Hysteria 2 URI |
+| `clash-client-info.txt` | Mihomo / Clash Meta 可直接使用的 YAML 代理片段 |
 | `clients/hysteria2-client.yaml` | Hysteria 2 客户端配置 |
 
 查看客户端信息：

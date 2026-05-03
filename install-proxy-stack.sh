@@ -712,13 +712,23 @@ quic:
 HY2
 
 log "生成客户端配置说明"
-PY_URLENCODED_PATH="$(python3 - <<PY
+PY_URI_FIELDS="$(python3 - <<PY
 from urllib.parse import quote
 print(quote("${XHTTP_PATH}", safe=''))
+print(quote("${HY2_PASSWORD}", safe=''))
+print(quote("${HY2_OBFS_PASSWORD}", safe=''))
+print(quote("${DOMAIN}-hysteria2", safe=''))
 PY
 )"
+PY_URLENCODED_PATH="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '1p')"
+HY2_AUTH_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '2p')"
+HY2_OBFS_PASSWORD_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '3p')"
+HY2_TAG_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '4p')"
 TAG="${DOMAIN}-vless-reality-xhttp"
 VLESS_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${PY_URLENCODED_PATH}#${TAG}"
+HY2_URI="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}#${HY2_TAG_ENCODED}"
+CLASH_VLESS_NAME="${DOMAIN}-vless-reality-xhttp"
+CLASH_HY2_NAME="${DOMAIN}-hysteria2"
 
 cat > "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
 server: ${DOMAIN}:${HY2_PORT_RANGE}
@@ -743,6 +753,42 @@ bandwidth:
   up: 50 mbps
   down: 200 mbps
 HY2CLIENT
+
+cat > "${INSTALL_DIR}/clash-client-info.txt" <<CLASH
+proxies:
+  - name: "${CLASH_VLESS_NAME}"
+    type: vless
+    server: ${DOMAIN}
+    port: ${XRAY_PORT}
+    udp: true
+    uuid: ${XRAY_UUID}
+    tls: true
+    servername: ${REALITY_SNI}
+    client-fingerprint: chrome
+    skip-cert-verify: false
+    reality-opts:
+      public-key: ${REALITY_PUBLIC_KEY}
+      short-id: ${SHORT_ID}
+    network: xhttp
+    xhttp-opts:
+      path: ${XHTTP_PATH}
+      mode: auto
+
+  - name: "${CLASH_HY2_NAME}"
+    type: hysteria2
+    server: ${DOMAIN}
+    ports: ${HY2_PORT_RANGE}
+    password: ${HY2_PASSWORD}
+    obfs: salamander
+    obfs-password: ${HY2_OBFS_PASSWORD}
+    sni: ${DOMAIN}
+    skip-cert-verify: false
+    alpn:
+      - h3
+    hop-interval: 30
+    up: "50 Mbps"
+    down: "200 Mbps"
+CLASH
 
 cat > "${INSTALL_DIR}/client-info.txt" <<INFO
 ========== Basic ==========
@@ -777,7 +823,10 @@ Auth password: ${HY2_PASSWORD}
 TLS SNI: ${DOMAIN}
 Obfs type: salamander
 Obfs password: ${HY2_OBFS_PASSWORD}
+Hysteria 2 URI:
+${HY2_URI}
 Client YAML: ${INSTALL_DIR}/clients/hysteria2-client.yaml
+Clash / Mihomo YAML: ${INSTALL_DIR}/clash-client-info.txt
 
 ========== Useful Commands ==========
 cd ${INSTALL_DIR} && docker compose ps
@@ -785,7 +834,7 @@ cd ${INSTALL_DIR} && docker compose logs -f --tail=100
 cd ${INSTALL_DIR} && docker compose pull && docker compose up -d
 cat ${INSTALL_DIR}/client-info.txt
 INFO
-chmod 600 "${INSTALL_DIR}/client-info.txt" "${INSTALL_DIR}/clients/hysteria2-client.yaml"
+chmod 600 "${INSTALL_DIR}/client-info.txt" "${INSTALL_DIR}/clients/hysteria2-client.yaml" "${INSTALL_DIR}/clash-client-info.txt"
 
 log "启动服务"
 cd "$INSTALL_DIR"

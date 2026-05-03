@@ -731,6 +731,10 @@ auth: ${HY2_PASSWORD}
 tls sni: ${DOMAIN}
 obfs type: salamander
 obfs password: ${HY2_OBFS_PASSWORD}
+hysteria2 uri:
+hysteria2://your_auth@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=your_obfs_password#${DOMAIN}-hysteria2
+clash / mihomo yaml:
+${INSTALL_DIR}/clash-client-info.txt
 
 transport:
   udp:

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Proxy Stack Auto Installer v2
-# VLESS + REALITY + XHTTP  +  Hysteria 2 with UDP port hopping
+# VLESS + REALITY + XHTTP  +  VLESS + TCP + TLS + Vision  +  Hysteria 2 with UDP port hopping
 # Designed to coexist with 1Panel/OpenResty by avoiding ports 80/443.
 # New in v2:
 #   - IPv4 + IPv6 detection, Cloudflare A + AAAA sync
@@ -14,6 +14,7 @@ ENV_FILE="/root/proxy-global.env"
 [ -f "$ENV_FILE" ] && source "$ENV_FILE"
 
 DEFAULT_XRAY_PORT="${DEFAULT_XRAY_PORT:-24443}"
+DEFAULT_XRAY_VISION_PORT="${DEFAULT_XRAY_VISION_PORT:-23333}"
 DEFAULT_HY2_PORT_RANGE="${DEFAULT_HY2_PORT_RANGE:-40000-50000}"
 ENABLE_IPV6="${ENABLE_IPV6:-true}"
 HY2_BANDWIDTH_UP="${HY2_BANDWIDTH_UP:-1 gbps}"
@@ -39,7 +40,7 @@ LINUX_NETSPEED_DD_URL="https://github.com/ylx2016/Linux-NetSpeed/raw/master/tcp.
 usage() {
   cat <<USAGE
 Usage:
-  bash $0 <domain> [xray_tcp_port] [hysteria_udp_port_or_range]
+  bash $0 <domain> [xray_tcp_port] [hysteria_udp_port_or_range] [xray_vision_tcp_port]
   bash $0 cleanup <domain>
   bash $0 uninstall <domain>
   bash $0 purge <domain>
@@ -49,7 +50,7 @@ Usage:
 Examples:
   bash $0 jp1.example.com
   bash $0 sg1.example.com 24443 40000-50000
-  bash $0 hk1.example.com 24443 10001
+  bash $0 hk1.example.com 24443 10001 23333
   bash $0 cleanup jp1.example.com
   bash $0 bbr
   bash $0 dd
@@ -60,6 +61,7 @@ Required environment variables, or put them in /root/proxy-global.env:
 
 Optional environment variables:
   DEFAULT_XRAY_PORT="24443"
+  DEFAULT_XRAY_VISION_PORT="23333"
   DEFAULT_HY2_PORT_RANGE="40000-50000"
   ENABLE_IPV6="true"                 # true/false; true means create AAAA when IPv6 is detected
   HY2_BANDWIDTH_UP="1 gbps"          # Hysteria 2 server-side upload cap per client
@@ -108,6 +110,7 @@ esac
 DOMAIN="${1:-}"
 XRAY_PORT="${2:-$DEFAULT_XRAY_PORT}"
 HY2_PORT_RANGE="${3:-$DEFAULT_HY2_PORT_RANGE}"
+XRAY_VISION_PORT="${4:-$DEFAULT_XRAY_VISION_PORT}"
 HY2_UFW_PORT_SPEC="${HY2_PORT_RANGE/-/:}"
 
 if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ] && [ -z "$DOMAIN" ]; then
@@ -128,7 +131,7 @@ if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ]; then
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "请使用 root 执行：sudo bash $0 $DOMAIN $XRAY_PORT $HY2_PORT_RANGE" >&2
+  echo "请使用 root 执行：sudo bash $0 $DOMAIN $XRAY_PORT $HY2_PORT_RANGE $XRAY_VISION_PORT" >&2
   exit 1
 fi
 
@@ -143,9 +146,9 @@ if [ "$ACTION" = "install" ] && [ -z "${CF_TOKEN:-}" ]; then
 fi
 
 if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ]; then
-python3 - "$ACTION" "$DOMAIN" "$XRAY_PORT" "$HY2_PORT_RANGE" <<'PY'
+python3 - "$ACTION" "$DOMAIN" "$XRAY_PORT" "$HY2_PORT_RANGE" "$XRAY_VISION_PORT" <<'PY'
 import re, sys
-_, action, domain, xray_port, hy2_range = sys.argv
+_, action, domain, xray_port, hy2_range, xray_vision_port = sys.argv
 if not re.fullmatch(r"(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", domain):
     raise SystemExit(f"域名格式不正确: {domain}")
 if action == "install":
@@ -155,6 +158,14 @@ if action == "install":
             raise ValueError
     except ValueError:
         raise SystemExit(f"Xray 端口不正确: {xray_port}")
+    try:
+        vp = int(xray_vision_port)
+        if not 1 <= vp <= 65535:
+            raise ValueError
+    except ValueError:
+        raise SystemExit(f"Xray Vision 端口不正确: {xray_vision_port}")
+    if xray_vision_port == xray_port:
+        raise SystemExit("Xray Vision 端口不能和 Xray REALITY/XHTTP 端口相同")
     if re.fullmatch(r"\d{1,5}", hy2_range):
         a = b = int(hy2_range)
     elif re.fullmatch(r"\d{1,5}-\d{1,5}", hy2_range):
@@ -765,6 +776,7 @@ services:
     network_mode: "host"
     volumes:
       - ./xray/config.json:/etc/xray/config.json:ro
+      - ./certs:/certs:ro
     command: ["run", "-config", "/etc/xray/config.json"]
 
   hysteria:
@@ -817,6 +829,40 @@ cat > "${INSTALL_DIR}/xray/config.json" <<XRAY
           "privateKey": "${REALITY_PRIVATE_KEY}",
           "shortIds": [
             "${SHORT_ID}"
+          ]
+        }
+      }
+    },
+    {
+      "tag": "vless-tcp-tls-vision",
+      "listen": "::",
+      "port": ${XRAY_VISION_PORT},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${XRAY_UUID}",
+            "flow": "xtls-rprx-vision",
+            "email": "vision-user"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tcpSettings": {
+          "header": {
+            "type": "none"
+          }
+        },
+        "tlsSettings": {
+          "serverName": "${DOMAIN}",
+          "certificates": [
+            {
+              "certificateFile": "/certs/fullchain.pem",
+              "keyFile": "/certs/privkey.pem"
+            }
           ]
         }
       }
@@ -965,9 +1011,12 @@ PORTS
 fi
 TAG="${DOMAIN}-vless-reality-xhttp"
 VLESS_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${PY_URLENCODED_PATH}#${TAG}"
+VLESS_VISION_TAG="${DOMAIN}-vless-tcp-tls-vision"
+VLESS_VISION_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_VISION_PORT}?encryption=none&security=tls&fp=chrome&type=tcp&host=${DOMAIN}&headerType=none&sni=${DOMAIN}&flow=xtls-rprx-vision#${VLESS_VISION_TAG}"
 HY2_URI_BASE="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}"
 HY2_SHARE_URI="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_URI_PORT}?${HY2_SHARE_QUERY}#${HY2_TAG_ENCODED}"
 CLASH_VLESS_NAME="${DOMAIN}-vless-reality-xhttp"
+CLASH_VISION_NAME="${DOMAIN}-vless-tcp-tls-vision"
 CLASH_HY2_NAME="${DOMAIN}-hysteria2"
 
 cat > "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
@@ -1048,6 +1097,19 @@ proxies:
       path: ${XHTTP_PATH}
       mode: auto
 
+  - name: "${CLASH_VISION_NAME}"
+    type: vless
+    server: ${DOMAIN}
+    port: ${XRAY_VISION_PORT}
+    udp: true
+    uuid: ${XRAY_UUID}
+    tls: true
+    servername: ${DOMAIN}
+    client-fingerprint: chrome
+    skip-cert-verify: false
+    network: tcp
+    flow: xtls-rprx-vision
+
   - name: "${CLASH_HY2_NAME}"
     type: hysteria2
     server: ${DOMAIN}
@@ -1097,6 +1159,20 @@ Flow: leave empty
 VLESS URI:
 ${VLESS_URI}
 
+========== VLESS + TCP + TLS + Vision ==========
+Address: ${DOMAIN}
+Port: ${XRAY_VISION_PORT}
+UUID: ${XRAY_UUID}
+Network: tcp
+Header type: none
+Security: tls
+TLS SNI / serverName: ${DOMAIN}
+Fingerprint: chrome
+Flow: xtls-rprx-vision
+
+VLESS URI:
+${VLESS_VISION_URI}
+
 ========== Hysteria 2 ==========
 Server: ${DOMAIN}:${HY2_PORT_RANGE}
 Auth password: ${HY2_PASSWORD}
@@ -1133,10 +1209,12 @@ cat "${INSTALL_DIR}/client-info.txt"
 echo
 echo "部署完成。请确认 VPS 防火墙/安全组已放行："
 echo "  TCP ${XRAY_PORT}"
+echo "  TCP ${XRAY_VISION_PORT}"
 echo "  UDP ${HY2_PORT_RANGE}"
 echo
 echo "如果使用 ufw，可以参考："
 echo "  ufw allow ${XRAY_PORT}/tcp"
+echo "  ufw allow ${XRAY_VISION_PORT}/tcp"
 echo "  ufw allow ${HY2_UFW_PORT_SPEC}/udp"
 echo
 echo "IPv6 说明："

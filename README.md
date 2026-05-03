@@ -4,7 +4,7 @@
 
 本项目会自动部署：
 
-- Xray：VLESS + REALITY + XHTTP
+- Xray：VLESS + REALITY + XHTTP，以及 VLESS + TCP + TLS + Vision
 - Hysteria 2：UDP 端口跳跃
 - Cloudflare DNS：自动创建 / 更新 A 与 AAAA 记录
 - acme.sh：通过 Cloudflare DNS-01 自动签发证书
@@ -16,7 +16,7 @@
 
 ## 特性
 
-- 一键部署 VLESS + REALITY + XHTTP 与 Hysteria 2
+- 一键部署 VLESS + REALITY + XHTTP、VLESS + TCP + TLS + Vision 与 Hysteria 2
 - 自动探测服务器公网 IPv4 / IPv6
 - 自动识别 Cloudflare Zone 并写入 DNS only 灰云记录
 - 支持 Hysteria 2 UDP port hopping，默认 `40000-50000/udp`
@@ -40,8 +40,10 @@ VPS
 │  └─ 443/tcp
 │
 ├─ Xray
-│  └─ 24443/tcp
-│     └─ VLESS + REALITY + XHTTP
+│  ├─ 24443/tcp
+│  │  └─ VLESS + REALITY + XHTTP
+│  └─ 23333/tcp
+│     └─ VLESS + TCP + TLS + Vision
 │
 └─ Hysteria 2
    └─ 40000-50000/udp
@@ -55,7 +57,7 @@ VPS
 | 模块 | 当前项目使用方式 | 默认版本 / 标签 | 说明 |
 |---|---|---|---|
 | 安装脚本 | `install-proxy-stack.sh` | v2 | 项目内置自动化脚本 |
-| Xray Core | Docker 镜像 | `ghcr.io/xtls/xray-core:latest` | 用于 VLESS + REALITY + XHTTP |
+| Xray Core | Docker 镜像 | `ghcr.io/xtls/xray-core:latest` | 用于 VLESS + REALITY + XHTTP 与 VLESS + TCP + TLS + Vision |
 | Hysteria 2 | Docker 镜像 | `tobyxdd/hysteria:latest` | 用于 Hysteria 2 服务端与端口跳跃 |
 | Docker | 宿主机提供 | 未固定 | 建议使用 Docker Engine 24+ |
 | Docker Compose | 宿主机插件 | 未固定 | 需要支持 `docker compose`，建议 Compose v2+ |
@@ -135,6 +137,7 @@ EMAIL="you@example.com"
 CF_TOKEN="your_cloudflare_api_token"
 
 DEFAULT_XRAY_PORT="24443"
+DEFAULT_XRAY_VISION_PORT="23333"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
 
 ENABLE_IPV6="true"
@@ -169,6 +172,7 @@ chmod 700 /root/install-proxy-stack.sh
 
 ```text
 24443/tcp
+23333/tcp
 40000-50000/udp
 ```
 
@@ -176,6 +180,7 @@ chmod 700 /root/install-proxy-stack.sh
 
 ```bash
 ufw allow 24443/tcp
+ufw allow 23333/tcp
 ufw allow 40000:50000/udp
 ufw status
 ```
@@ -189,13 +194,13 @@ bash /root/install-proxy-stack.sh jp1.example.com
 等同于：
 
 ```bash
-bash /root/install-proxy-stack.sh jp1.example.com 24443 40000-50000
+bash /root/install-proxy-stack.sh jp1.example.com 24443 40000-50000 23333
 ```
 
 自定义端口：
 
 ```bash
-bash /root/install-proxy-stack.sh jp1.example.com 25443 41000-50000
+bash /root/install-proxy-stack.sh jp1.example.com 25443 41000-50000 23334
 ```
 
 ---
@@ -236,8 +241,8 @@ bash /root/install-proxy-stack.sh dd
 | `certs/fullchain.pem` | acme.sh 安装的证书链 |
 | `certs/privkey.pem` | acme.sh 安装的私钥 |
 | `secrets.env` | UUID、REALITY 密钥、Hysteria 密码等敏感参数 |
-| `client-info.txt` | 客户端连接信息汇总，包含 VLESS URI 与官方 Hysteria 2 URI |
-| `clash-client-info.txt` | Mihomo / Clash Meta 可直接使用的 YAML 代理片段 |
+| `client-info.txt` | 客户端连接信息汇总，包含 VLESS REALITY/XHTTP URI、VLESS TCP/TLS Vision URI 与官方 Hysteria 2 URI |
+| `clash-client-info.txt` | Mihomo / Clash Meta 可直接使用的 YAML 代理片段，包含两条 VLESS 线路与 Hysteria 2 |
 | `sing-box-client-info.json` | sing-box 可直接使用的 Hysteria 2 JSON 片段 |
 | `clients/hysteria2-client.yaml` | Hysteria 2 客户端配置 |
 
@@ -259,7 +264,7 @@ cat /opt/proxy-stack-jp1-example-com/client-info.txt
 ### 命令行参数
 
 ```bash
-bash install-proxy-stack.sh <domain> [xray_tcp_port] [hysteria_udp_port_or_range]
+bash install-proxy-stack.sh <domain> [xray_tcp_port] [hysteria_udp_port_or_range] [xray_vision_tcp_port]
 bash install-proxy-stack.sh cleanup <domain>
 bash install-proxy-stack.sh uninstall <domain>
 bash install-proxy-stack.sh purge <domain>
@@ -270,6 +275,7 @@ bash install-proxy-stack.sh purge <domain>
 | `domain` | 是 | 无 | 节点域名，例如 `jp1.example.com` |
 | `xray_tcp_port` | 否 | `24443` | Xray VLESS + REALITY + XHTTP 监听端口 |
 | `hysteria_udp_port_or_range` | 否 | `40000-50000` | Hysteria 2 单端口或端口跳跃范围 |
+| `xray_vision_tcp_port` | 否 | `23333` | Xray VLESS + TCP + TLS + Vision 监听端口 |
 
 ### 环境变量
 
@@ -280,6 +286,7 @@ bash install-proxy-stack.sh purge <domain>
 | `EMAIL` | 是 | 无 | acme.sh 注册与证书申请邮箱 |
 | `CF_TOKEN` | 是 | 无 | Cloudflare API Token |
 | `DEFAULT_XRAY_PORT` | 否 | `24443` | 默认 Xray TCP 端口 |
+| `DEFAULT_XRAY_VISION_PORT` | 否 | `23333` | 默认 Xray VLESS + TCP + TLS + Vision 端口 |
 | `DEFAULT_HY2_PORT_RANGE` | 否 | `40000-50000` | 默认 Hysteria 2 单端口或 UDP 范围 |
 | `HY2_BANDWIDTH_UP` | 否 | `1 gbps` | Hysteria 2 服务端每客户端上行带宽上限 |
 | `HY2_BANDWIDTH_DOWN` | 否 | `1 gbps` | Hysteria 2 服务端每客户端下行带宽上限 |
@@ -308,6 +315,7 @@ EMAIL="you@example.com"
 CF_TOKEN="your_cloudflare_api_token"
 
 DEFAULT_XRAY_PORT="24443"
+DEFAULT_XRAY_VISION_PORT="23333"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
 ENABLE_IPV6="true"
 

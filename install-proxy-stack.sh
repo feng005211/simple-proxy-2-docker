@@ -858,9 +858,11 @@ HY2_URI_PORT="${HY2_PORT_RANGE%%-*}"
 HY2_HAS_PORT_RANGE=0
 HY2_SINGBOX_PORTS=""
 HY2_MIHOMO_PORT_FIELD="port: ${HY2_URI_PORT}"
+HY2_SHARE_QUERY="sni=${DOMAIN}&insecure=0&allowInsecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}"
 if [[ "$HY2_PORT_RANGE" == *-* ]]; then
   HY2_HAS_PORT_RANGE=1
   HY2_SINGBOX_PORTS="${HY2_PORT_RANGE/-/:}"
+  HY2_SHARE_QUERY="${HY2_SHARE_QUERY}&mport=${HY2_PORT_RANGE}"
   HY2_MIHOMO_PORT_FIELD="$(cat <<PORTS
 port: ${HY2_URI_PORT}
     ports: ${HY2_PORT_RANGE}
@@ -870,7 +872,7 @@ fi
 TAG="${DOMAIN}-vless-reality-xhttp"
 VLESS_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${PY_URLENCODED_PATH}#${TAG}"
 HY2_URI_BASE="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}"
-HY2_URI="${HY2_URI_BASE}#${HY2_TAG_ENCODED}"
+HY2_SHARE_URI="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_URI_PORT}?${HY2_SHARE_QUERY}#${HY2_TAG_ENCODED}"
 CLASH_VLESS_NAME="${DOMAIN}-vless-reality-xhttp"
 CLASH_HY2_NAME="${DOMAIN}-hysteria2"
 
@@ -1007,8 +1009,8 @@ Auth password: ${HY2_PASSWORD}
 TLS SNI: ${DOMAIN}
 Obfs type: salamander
 Obfs password: ${HY2_OBFS_PASSWORD}
-Hysteria 2 Official URI:
-${HY2_URI}
+Hysteria 2 Share URI:
+${HY2_SHARE_URI}
 Hysteria 2 Official Client YAML: ${INSTALL_DIR}/clients/hysteria2-client.yaml
 Sing-box JSON: ${INSTALL_DIR}/sing-box-client-info.json
 Clash / Mihomo YAML: ${INSTALL_DIR}/clash-client-info.txt

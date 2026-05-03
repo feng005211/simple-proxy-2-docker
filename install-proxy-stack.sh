@@ -219,9 +219,9 @@ PY
     return 0
   fi
 
-  python3 - <<'PY'
-import os, random, re
-pool = os.environ.get('REALITY_SNI_POOL', '')
+  python3 - "$REALITY_SNI_POOL" <<'PY'
+import random, re, sys
+pool = sys.argv[1]
 items = [x.strip() for x in re.split(r'[, \t\r\n]+', pool) if x.strip()]
 if not items:
     raise SystemExit('REALITY_SNI_POOL 为空，无法随机选择 REALITY SNI')
@@ -339,8 +339,8 @@ resolve_zone_for_domain() {
   log "自动识别 Cloudflare Zone"
   ZONES_JSON="$(cf_api GET "/zones?per_page=100")"
   ZONE_ID="$(printf '%s' "$ZONES_JSON" | python3 -c '
-import json, os, sys
-DOMAIN = os.environ["DOMAIN"].rstrip(".")
+import json, sys
+DOMAIN = sys.argv[1].rstrip(".")
 j = json.load(sys.stdin)
 matches = []
 for z in j.get("result", []):
@@ -350,10 +350,10 @@ for z in j.get("result", []):
 if matches:
     matches.sort(reverse=True)
     print(matches[0][1])
-' )"
+' "$DOMAIN" )"
   ZONE_NAME="$(printf '%s' "$ZONES_JSON" | python3 -c '
-import json, os, sys
-DOMAIN = os.environ["DOMAIN"].rstrip(".")
+import json, sys
+DOMAIN = sys.argv[1].rstrip(".")
 j = json.load(sys.stdin)
 matches = []
 for z in j.get("result", []):
@@ -363,7 +363,7 @@ for z in j.get("result", []):
 if matches:
     matches.sort(reverse=True)
     print(matches[0][2])
-' )"
+' "$DOMAIN" )"
 
   if [ -z "${ZONE_ID:-}" ]; then
     echo "没有在 Cloudflare Token 权限内找到 ${DOMAIN} 对应的 Zone。" >&2

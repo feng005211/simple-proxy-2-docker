@@ -62,20 +62,20 @@ Recommended settings:
 
 ```bash
 ENABLE_CAMOUFLAGE_SITE="true"
-CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_PORT="28080"
 CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 ```
 
 When enabled, the installer starts a small `nginx:alpine` container and binds it to:
 
 ```text
-127.0.0.1:18080
+127.0.0.1:28080
 ```
 
 The default Hysteria masquerade target automatically becomes:
 
 ```text
-http://127.0.0.1:18080/
+http://127.0.0.1:28080/
 ```
 
 This does not occupy public `80/tcp` or `443/tcp`. If you want visitors to see the site from the internet, point your existing 1Panel or OpenResty reverse proxy to the same local port.
@@ -183,7 +183,7 @@ DEFAULT_HY2_PORT_RANGE="40000-50000"
 
 CERT_MODE="acme"
 ENABLE_CAMOUFLAGE_SITE="false"
-CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_PORT="28080"
 CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 
 ENABLE_IPV6="true"
@@ -322,7 +322,7 @@ Important environment variables:
 | `TLS_CERT_FILE` | manual only | none | Source fullchain path copied when `CERT_MODE=manual` |
 | `TLS_KEY_FILE` | manual only | none | Source private key path copied when `CERT_MODE=manual` |
 | `ENABLE_CAMOUFLAGE_SITE` | no | `false` | Start a local camouflage site container and use it for Hysteria masquerade |
-| `CAMOUFLAGE_SITE_PORT` | no | `18080` | Loopback listen port for the camouflage site |
+| `CAMOUFLAGE_SITE_PORT` | no | `28080` | Loopback listen port for the camouflage site |
 | `CAMOUFLAGE_SITE_TITLE` | no | `<domain> Status Portal` | HTML title and hero text for the camouflage page |
 | `ENABLE_IPV6` | no | `true` | Create AAAA records when IPv6 is detected |
 | `PUBLIC_IPV4` | no | auto | Manually override detected IPv4 |

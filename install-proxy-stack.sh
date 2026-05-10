@@ -23,7 +23,7 @@ CERT_MODE="${CERT_MODE:-acme}"
 TLS_CERT_FILE="${TLS_CERT_FILE:-}"
 TLS_KEY_FILE="${TLS_KEY_FILE:-}"
 ENABLE_CAMOUFLAGE_SITE="${ENABLE_CAMOUFLAGE_SITE:-false}"
-CAMOUFLAGE_SITE_PORT="${CAMOUFLAGE_SITE_PORT:-18080}"
+CAMOUFLAGE_SITE_PORT="${CAMOUFLAGE_SITE_PORT:-28080}"
 CAMOUFLAGE_SITE_TITLE="${CAMOUFLAGE_SITE_TITLE:-}"
 ENABLE_IPV6="${ENABLE_IPV6:-true}"
 HY2_BANDWIDTH_UP="${HY2_BANDWIDTH_UP:-1 gbps}"
@@ -79,7 +79,7 @@ Optional environment variables:
   TLS_CERT_FILE="/path/to/fullchain.pem"
   TLS_KEY_FILE="/path/to/privkey.pem"
   ENABLE_CAMOUFLAGE_SITE="false"      # true/false
-  CAMOUFLAGE_SITE_PORT="18080"
+  CAMOUFLAGE_SITE_PORT="28080"
   CAMOUFLAGE_SITE_TITLE="Example Status Portal"
   ENABLE_IPV6="true"                 # true/false; true means create AAAA when IPv6 is detected
   HY2_BANDWIDTH_UP="1 gbps"          # Hysteria 2 server-side upload cap per client

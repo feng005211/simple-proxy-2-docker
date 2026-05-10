@@ -67,20 +67,20 @@ VPS
 
 ```bash
 ENABLE_CAMOUFLAGE_SITE="true"
-CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_PORT="28080"
 CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 ```
 
 启用后，脚本会启动一个 `nginx:alpine` 容器，并只绑定到：
 
 ```text
-127.0.0.1:18080
+127.0.0.1:28080
 ```
 
 同时把 Hysteria 默认的伪装目标自动改成：
 
 ```text
-http://127.0.0.1:18080/
+http://127.0.0.1:28080/
 ```
 
 它不会占用公网 `80/tcp` 和 `443/tcp`。如果你希望公网访问时也看到这个站点，只需要在现有 1Panel / OpenResty 里把域名反代到这个本地端口。
@@ -180,7 +180,7 @@ DEFAULT_HY2_PORT_RANGE="40000-50000"
 
 CERT_MODE="acme"
 ENABLE_CAMOUFLAGE_SITE="false"
-CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_PORT="28080"
 CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 
 ENABLE_IPV6="true"
@@ -342,7 +342,7 @@ bash install-proxy-stack.sh purge <domain>
 | `TLS_CERT_FILE` | manual 时必填 | 无 | `CERT_MODE=manual` 时复制的证书链路径 |
 | `TLS_KEY_FILE` | manual 时必填 | 无 | `CERT_MODE=manual` 时复制的私钥路径 |
 | `ENABLE_CAMOUFLAGE_SITE` | 否 | `false` | 启动本地伪装站点容器，并给 Hysteria masquerade 使用 |
-| `CAMOUFLAGE_SITE_PORT` | 否 | `18080` | 本地回环地址绑定端口 |
+| `CAMOUFLAGE_SITE_PORT` | 否 | `28080` | 本地回环地址绑定端口 |
 | `CAMOUFLAGE_SITE_TITLE` | 否 | `<domain> Status Portal` | 伪装页面标题和主视觉文案 |
 | `HY2_BANDWIDTH_UP` | 否 | `1 gbps` | Hysteria 2 服务端每客户端上行带宽上限 |
 | `HY2_BANDWIDTH_DOWN` | 否 | `1 gbps` | Hysteria 2 服务端每客户端下行带宽上限 |

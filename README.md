@@ -32,7 +32,7 @@ It keeps the proxy stack on separate ports, can use DNS-01 or your own existing 
 - Detects public IPv4 / IPv6 and updates Cloudflare A / AAAA records
 - Forces Cloudflare records to DNS only / gray cloud
 - Supports `acme`, `manual`, and `existing` certificate modes
-- Can optionally deploy a local camouflage site for Hysteria masquerade and reverse proxy fronting
+- Deploys a local camouflage site by default for Hysteria masquerade and reverse proxy fronting
 - Supports optional Hysteria 2 UDP port hopping, defaulting to `40000-50000/udp` when enabled
 - Persists UUIDs, REALITY keys, Hysteria passwords, REALITY SNI, and XHTTP path
 - Generates client output for common clients
@@ -53,7 +53,7 @@ It keeps the proxy stack on separate ports, can use DNS-01 or your own existing 
 
 ## Camouflage Site
 
-The stack can optionally deploy a lightweight static camouflage site on local loopback. It is useful in two ways:
+The stack deploys a lightweight static camouflage site on local loopback by default. It is useful in two ways:
 
 - Hysteria 2 can use it as the masquerade target instead of relying on an external site
 - 1Panel or OpenResty can reverse proxy the same local site if you want a normal-looking web page on the domain
@@ -182,7 +182,7 @@ ENABLE_HYSTERIA="false"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
 
 CERT_MODE="acme"
-ENABLE_CAMOUFLAGE_SITE="false"
+ENABLE_CAMOUFLAGE_SITE="true"
 CAMOUFLAGE_SITE_PORT="28080"
 CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 
@@ -321,14 +321,14 @@ Important environment variables:
 | `CERT_MODE` | no | `acme` | Certificate source: `acme`, `manual`, or `existing` |
 | `TLS_CERT_FILE` | manual only | none | Source fullchain path copied when `CERT_MODE=manual` |
 | `TLS_KEY_FILE` | manual only | none | Source private key path copied when `CERT_MODE=manual` |
-| `ENABLE_CAMOUFLAGE_SITE` | no | `false` | Start a local camouflage site container and use it for Hysteria masquerade |
+| `ENABLE_CAMOUFLAGE_SITE` | no | `true` | Start a local camouflage site container and use it for Hysteria masquerade |
 | `CAMOUFLAGE_SITE_PORT` | no | `28080` | Loopback listen port for the camouflage site |
 | `CAMOUFLAGE_SITE_TITLE` | no | `<domain> Status Portal` | HTML title and hero text for the camouflage page |
 | `ENABLE_IPV6` | no | `true` | Create AAAA records when IPv6 is detected |
 | `PUBLIC_IPV4` | no | auto | Manually override detected IPv4 |
 | `PUBLIC_IPV6` | no | auto | Manually override detected IPv6 |
 | `INSTALL_DIR` | no | `/opt/proxy-stack-<domain>` | Custom installation directory |
-| `MASQUERADE_URL` | no | `https://<domain>/` | Hysteria 2 masquerade proxy URL |
+| `MASQUERADE_URL` | no | local camouflage site or `https://<domain>/` | Hysteria 2 masquerade proxy URL |
 | `REALITY_SNI` | no | random choice | Fixed REALITY server name |
 | `REALITY_TARGET` | no | `<REALITY_SNI>:443` | Fixed REALITY fallback target |
 | `REALITY_SNI_POOL` | no | built in | Candidate list used when `REALITY_SNI` is omitted |

@@ -22,7 +22,7 @@ DEFAULT_HY2_PORT_RANGE="${DEFAULT_HY2_PORT_RANGE:-40000-50000}"
 CERT_MODE="${CERT_MODE:-acme}"
 TLS_CERT_FILE="${TLS_CERT_FILE:-}"
 TLS_KEY_FILE="${TLS_KEY_FILE:-}"
-ENABLE_CAMOUFLAGE_SITE="${ENABLE_CAMOUFLAGE_SITE:-false}"
+ENABLE_CAMOUFLAGE_SITE="${ENABLE_CAMOUFLAGE_SITE:-true}"
 CAMOUFLAGE_SITE_PORT="${CAMOUFLAGE_SITE_PORT:-28080}"
 CAMOUFLAGE_SITE_TITLE="${CAMOUFLAGE_SITE_TITLE:-}"
 ENABLE_IPV6="${ENABLE_IPV6:-true}"
@@ -78,7 +78,7 @@ Optional environment variables:
   CERT_MODE="acme"                    # acme/manual/existing
   TLS_CERT_FILE="/path/to/fullchain.pem"
   TLS_KEY_FILE="/path/to/privkey.pem"
-  ENABLE_CAMOUFLAGE_SITE="false"      # true/false
+  ENABLE_CAMOUFLAGE_SITE="true"       # true/false
   CAMOUFLAGE_SITE_PORT="28080"
   CAMOUFLAGE_SITE_TITLE="Example Status Portal"
   ENABLE_IPV6="true"                 # true/false; true means create AAAA when IPv6 is detected
@@ -139,7 +139,6 @@ fi
 if [ "$ACTION" != "bbr" ] && [ "$ACTION" != "dd" ]; then
   DOMAIN="$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/\.$//')"
   export DOMAIN
-  MASQUERADE_URL="${MASQUERADE_URL:-https://${DOMAIN}/}"
   SAFE_DOMAIN="${DOMAIN//./-}"
   INSTALL_DIR="${INSTALL_DIR:-/opt/proxy-stack-${SAFE_DOMAIN}}"
   SECRETS_FILE="${INSTALL_DIR}/secrets.env"

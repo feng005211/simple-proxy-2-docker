@@ -22,7 +22,7 @@
 - 自动探测服务器公网 IPv4 / IPv6
 - 自动识别 Cloudflare Zone 并写入 DNS only 灰云记录
 - 支持 `acme`、`manual`、`existing` 三种证书模式
-- 可选部署本地伪装站点，既能给 Hysteria masquerade 使用，也方便 1Panel / OpenResty 反代展示
+- 默认部署本地伪装站点，既能给 Hysteria masquerade 使用，也方便 1Panel / OpenResty 反代展示
 - 支持可选的 Hysteria 2 UDP port hopping，启用后默认 `40000-50000/udp`
 - REALITY SNI / target 可固定，也可从候选池随机选择并持久化
 - 按已启用协议自动生成客户端连接信息
@@ -58,7 +58,7 @@ VPS
 
 ## 伪装站点
 
-这套脚本现在可以可选部署一个轻量静态伪装站点，主要有两个用途：
+这套脚本默认会部署一个轻量静态伪装站点，主要有两个用途：
 
 - 给 Hysteria 2 作为 `masquerade` 的目标站点
 - 如果你希望域名对外看起来像正常网站，可以让 1Panel / OpenResty 反代到这个本地站点
@@ -179,7 +179,7 @@ ENABLE_HYSTERIA="false"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
 
 CERT_MODE="acme"
-ENABLE_CAMOUFLAGE_SITE="false"
+ENABLE_CAMOUFLAGE_SITE="true"
 CAMOUFLAGE_SITE_PORT="28080"
 CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 
@@ -282,7 +282,7 @@ bash /root/install-proxy-stack.sh dd
 
 | 路径 | 说明 |
 |---|---|
-| `docker-compose.yml` | Xray 容器定义，以及可选的 Hysteria 2 / 伪装站点服务 |
+| `docker-compose.yml` | Xray 容器定义，以及可选的 Hysteria 2 和默认伪装站点服务 |
 | `xray/config.json` | Xray 服务端配置 |
 | `hysteria/config.yaml` | Hysteria 2 服务端配置，仅在启用时生成 |
 | `certs/fullchain.pem` | acme.sh 安装的证书链 |
@@ -341,7 +341,7 @@ bash install-proxy-stack.sh purge <domain>
 | `CERT_MODE` | 否 | `acme` | 证书来源：`acme`、`manual` 或 `existing` |
 | `TLS_CERT_FILE` | manual 时必填 | 无 | `CERT_MODE=manual` 时复制的证书链路径 |
 | `TLS_KEY_FILE` | manual 时必填 | 无 | `CERT_MODE=manual` 时复制的私钥路径 |
-| `ENABLE_CAMOUFLAGE_SITE` | 否 | `false` | 启动本地伪装站点容器，并给 Hysteria masquerade 使用 |
+| `ENABLE_CAMOUFLAGE_SITE` | 否 | `true` | 启动本地伪装站点容器，并给 Hysteria masquerade 使用 |
 | `CAMOUFLAGE_SITE_PORT` | 否 | `28080` | 本地回环地址绑定端口 |
 | `CAMOUFLAGE_SITE_TITLE` | 否 | `<domain> Status Portal` | 伪装页面标题和主视觉文案 |
 | `HY2_BANDWIDTH_UP` | 否 | `1 gbps` | Hysteria 2 服务端每客户端上行带宽上限 |
@@ -353,7 +353,7 @@ bash install-proxy-stack.sh purge <domain>
 | `PUBLIC_IPV6` | 否 | 自动探测 | 手动指定公网 IPv6 |
 | `PUBLIC_IP` | 否 | 空 | 兼容旧变量，等价于 IPv4 覆盖 |
 | `INSTALL_DIR` | 否 | `/opt/proxy-stack-<domain>` | 自定义安装目录 |
-| `MASQUERADE_URL` | 否 | `https://<domain>/` | Hysteria 2 masquerade 代理地址 |
+| `MASQUERADE_URL` | 否 | 本地伪装站点或 `https://<domain>/` | Hysteria 2 masquerade 代理地址 |
 | `HY2_MAX_IDLE_TIMEOUT` | 否 | `60s` | Hysteria 2 QUIC 空闲超时 |
 | `HY2_QUIC_MAX_STREAM_WINDOW` | 否 | `16777216` | Hysteria 2 单流最大接收窗口 |
 | `HY2_QUIC_MAX_CONN_WINDOW` | 否 | `41943040` | Hysteria 2 连接最大接收窗口 |

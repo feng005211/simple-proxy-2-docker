@@ -2,14 +2,14 @@
 
 [English README](README.md)
 
-面向多台 VPS 的一键代理节点部署脚本，适合在已经运行 1Panel / OpenResty 的服务器上追加代理能力。
+面向多台 VPS 的 Xray 优先代理节点部署脚本，适合在已经运行 1Panel / OpenResty 的服务器上追加代理能力。
 
 本项目会自动部署：
 
 - Xray：VLESS + REALITY + XHTTP，以及 VLESS + TCP + TLS + Vision
-- Hysteria 2：UDP 端口跳跃
+- Hysteria 2：可选 UDP 端口跳跃
 - Cloudflare DNS：自动创建 / 更新 A 与 AAAA 记录
-- acme.sh：通过 Cloudflare DNS-01 自动签发证书
+- acme.sh：通过 Cloudflare DNS-01 自动签发证书，也支持手动证书 / 复用已有证书
 - Docker Compose：统一容器化运行
 
 设计目标很简单：不占用 `80/tcp` 和 `443/tcp`，尽量不影响 1Panel 原有网站。
@@ -18,12 +18,14 @@
 
 ## 特性
 
-- 一键部署 VLESS + REALITY + XHTTP、VLESS + TCP + TLS + Vision 与 Hysteria 2
+- 默认安装两条 Xray 线路，Hysteria 2 改为按需启用
 - 自动探测服务器公网 IPv4 / IPv6
 - 自动识别 Cloudflare Zone 并写入 DNS only 灰云记录
-- 支持 Hysteria 2 UDP port hopping，默认 `40000-50000/udp`
+- 支持 `acme`、`manual`、`existing` 三种证书模式
+- 可选部署本地伪装站点，既能给 Hysteria masquerade 使用，也方便 1Panel / OpenResty 反代展示
+- 支持可选的 Hysteria 2 UDP port hopping，启用后默认 `40000-50000/udp`
 - REALITY SNI / target 可固定，也可从候选池随机选择并持久化
-- 自动生成客户端连接信息与 Hysteria 2 客户端 YAML
+- 按已启用协议自动生成客户端连接信息
 - 支持 `cleanup / uninstall / purge` 一键彻底清理节点
 - 使用 host network，降低 Docker IPv6 与 UDP 转发复杂度
 
@@ -47,10 +49,41 @@ VPS
 │  └─ 23333/tcp
 │     └─ VLESS + TCP + TLS + Vision
 │
-└─ Hysteria 2
+└─ 可选 Hysteria 2
    └─ 40000-50000/udp
       └─ UDP port hopping
 ```
+
+---
+
+## 伪装站点
+
+这套脚本现在可以可选部署一个轻量静态伪装站点，主要有两个用途：
+
+- 给 Hysteria 2 作为 `masquerade` 的目标站点
+- 如果你希望域名对外看起来像正常网站，可以让 1Panel / OpenResty 反代到这个本地站点
+
+推荐配置：
+
+```bash
+ENABLE_CAMOUFLAGE_SITE="true"
+CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
+```
+
+启用后，脚本会启动一个 `nginx:alpine` 容器，并只绑定到：
+
+```text
+127.0.0.1:18080
+```
+
+同时把 Hysteria 默认的伪装目标自动改成：
+
+```text
+http://127.0.0.1:18080/
+```
+
+它不会占用公网 `80/tcp` 和 `443/tcp`。如果你希望公网访问时也看到这个站点，只需要在现有 1Panel / OpenResty 里把域名反代到这个本地端口。
 
 ---
 
@@ -142,7 +175,13 @@ DEFAULT_XRAY_PORT="24443"
 DEFAULT_XRAY_VISION_PORT="23333"
 XRAY_RUN_UID="65532"
 XRAY_RUN_GID="65532"
+ENABLE_HYSTERIA="false"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
+
+CERT_MODE="acme"
+ENABLE_CAMOUFLAGE_SITE="false"
+CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 
 ENABLE_IPV6="true"
 
@@ -177,7 +216,6 @@ chmod 700 /root/install-proxy-stack.sh
 ```text
 24443/tcp
 23333/tcp
-40000-50000/udp
 ```
 
 如果使用 `ufw`：
@@ -185,8 +223,13 @@ chmod 700 /root/install-proxy-stack.sh
 ```bash
 ufw allow 24443/tcp
 ufw allow 23333/tcp
-ufw allow 40000:50000/udp
 ufw status
+```
+
+如果你明确启用了 Hysteria 2，再额外放行：
+
+```text
+40000-50000/udp
 ```
 
 ### 4. 执行部署
@@ -239,16 +282,16 @@ bash /root/install-proxy-stack.sh dd
 
 | 路径 | 说明 |
 |---|---|
-| `docker-compose.yml` | Xray 与 Hysteria 2 容器定义 |
+| `docker-compose.yml` | Xray 容器定义，以及可选的 Hysteria 2 / 伪装站点服务 |
 | `xray/config.json` | Xray 服务端配置 |
-| `hysteria/config.yaml` | Hysteria 2 服务端配置 |
+| `hysteria/config.yaml` | Hysteria 2 服务端配置，仅在启用时生成 |
 | `certs/fullchain.pem` | acme.sh 安装的证书链 |
 | `certs/privkey.pem` | acme.sh 安装的私钥 |
 | `secrets.env` | UUID、REALITY 密钥、Hysteria 密码等敏感参数 |
-| `client-info.txt` | 客户端连接信息汇总，包含 VLESS REALITY/XHTTP URI、VLESS TCP/TLS Vision URI 与官方 Hysteria 2 URI |
+| `client-info.txt` | 客户端连接信息汇总，包含两条 VLESS URI，以及可选的 Hysteria 2 URI |
 | `clash-client-info.txt` | Mihomo / Clash Meta 可直接使用的 YAML 代理片段，包含两条 VLESS 线路与 Hysteria 2 |
-| `sing-box-client-info.json` | sing-box 可直接使用的 Hysteria 2 JSON 片段 |
-| `clients/hysteria2-client.yaml` | Hysteria 2 客户端配置 |
+| `sing-box-client-info.json` | sing-box 可直接使用的 Hysteria 2 JSON 片段，仅在启用时生成 |
+| `clients/hysteria2-client.yaml` | Hysteria 2 客户端配置，仅在启用时生成 |
 
 说明：
 Hysteria 2 官方支持在地址或 URI 中直接使用多端口格式，例如 `example.com:40000-50000`。
@@ -287,13 +330,20 @@ bash install-proxy-stack.sh purge <domain>
 
 | 变量 | 必填 | 默认值 | 说明 |
 |---|---:|---|---|
-| `EMAIL` | 是 | 无 | acme.sh 注册与证书申请邮箱 |
+| `EMAIL` | acme 模式必填 | 无 | acme.sh 注册与证书申请邮箱 |
 | `CF_TOKEN` | 是 | 无 | Cloudflare API Token |
 | `DEFAULT_XRAY_PORT` | 否 | `24443` | 默认 Xray TCP 端口 |
 | `DEFAULT_XRAY_VISION_PORT` | 否 | `23333` | 默认 Xray VLESS + TCP + TLS + Vision 端口 |
 | `XRAY_RUN_UID` | 否 | `65532` | Xray 容器运行 UID，同时用于证书私钥 owner |
 | `XRAY_RUN_GID` | 否 | `65532` | Xray 容器运行 GID，同时用于证书私钥 group |
+| `ENABLE_HYSTERIA` | 否 | `false` | 是否启用 Hysteria 2 服务、客户端文件和 UDP 端口提示 |
 | `DEFAULT_HY2_PORT_RANGE` | 否 | `40000-50000` | 默认 Hysteria 2 单端口或 UDP 范围 |
+| `CERT_MODE` | 否 | `acme` | 证书来源：`acme`、`manual` 或 `existing` |
+| `TLS_CERT_FILE` | manual 时必填 | 无 | `CERT_MODE=manual` 时复制的证书链路径 |
+| `TLS_KEY_FILE` | manual 时必填 | 无 | `CERT_MODE=manual` 时复制的私钥路径 |
+| `ENABLE_CAMOUFLAGE_SITE` | 否 | `false` | 启动本地伪装站点容器，并给 Hysteria masquerade 使用 |
+| `CAMOUFLAGE_SITE_PORT` | 否 | `18080` | 本地回环地址绑定端口 |
+| `CAMOUFLAGE_SITE_TITLE` | 否 | `<domain> Status Portal` | 伪装页面标题和主视觉文案 |
 | `HY2_BANDWIDTH_UP` | 否 | `1 gbps` | Hysteria 2 服务端每客户端上行带宽上限 |
 | `HY2_BANDWIDTH_DOWN` | 否 | `1 gbps` | Hysteria 2 服务端每客户端下行带宽上限 |
 | `HY2_CLIENT_BANDWIDTH_UP` | 否 | `1 gbps` | 写入客户端模板的默认上行带宽 |
@@ -336,6 +386,41 @@ chmod 600 /root/proxy-global.env
 
 ---
 
+## 证书模式
+
+默认模式：
+
+```bash
+CERT_MODE="acme"
+```
+
+脚本会使用 acme.sh + Cloudflare DNS-01 签发和续期证书。
+
+如果 DNS-01 公共解析检查一直卡住，可以复用 1Panel / OpenResty / 其他服务已有证书：
+
+```bash
+CERT_MODE="manual"
+TLS_CERT_FILE="/path/to/fullchain.pem"
+TLS_KEY_FILE="/path/to/privkey.pem"
+```
+
+脚本会把这两个文件复制到节点安装目录，并设置 Xray / Hysteria 2 可读取的权限。
+
+如果你已经提前把证书放到安装目录，可以使用：
+
+```bash
+CERT_MODE="existing"
+```
+
+需要提前准备：
+
+```text
+/opt/proxy-stack-jp1-example-com/certs/fullchain.pem
+/opt/proxy-stack-jp1-example-com/certs/privkey.pem
+```
+
+---
+
 ## 日常运维
 
 进入安装目录：
@@ -362,7 +447,7 @@ docker compose logs -f --tail=100
 docker compose logs -f --tail=100 xray
 ```
 
-只看 Hysteria 2：
+只看 Hysteria 2，启用时：
 
 ```bash
 docker compose logs -f --tail=100 hysteria

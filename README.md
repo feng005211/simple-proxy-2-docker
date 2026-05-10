@@ -2,16 +2,16 @@
 
 [中文文档](README.zh.md)
 
-Self-hosted Xray and Hysteria 2 proxy stack for VPS nodes that already run 1Panel, OpenResty, or other services on `80/tcp` and `443/tcp`.
+Self-hosted Xray-first proxy stack for VPS nodes that already run 1Panel, OpenResty, or other services on `80/tcp` and `443/tcp`.
 
 This project deploys a Docker Compose based node with:
 
 - Xray: VLESS + REALITY + XHTTP
 - Xray: VLESS + TCP + TLS + Vision
-- Hysteria 2: UDP port hopping
+- Hysteria 2: optional UDP port hopping
 - Cloudflare DNS automation for A / AAAA records
-- acme.sh DNS-01 certificates through Cloudflare
-- Generated client information for share links, Mihomo / Clash Meta, sing-box, and the official Hysteria 2 client
+- acme.sh DNS-01 certificates through Cloudflare, or manual / existing certificate reuse
+- Generated client information for the enabled protocols, plus Mihomo / Clash Meta output
 
 The main design goal is simple: add a practical multi-protocol proxy node to an existing VPS without taking over `80/tcp` or `443/tcp`.
 
@@ -21,18 +21,19 @@ The main design goal is simple: add a practical multi-protocol proxy node to an 
 
 Many one-click proxy scripts assume a clean server and often want exclusive control over web ports. This script is built for the more common VPS reality: you may already have 1Panel, OpenResty, websites, dashboards, or other services running.
 
-It keeps the proxy stack on separate ports, uses DNS-01 certificate issuance, writes Cloudflare DNS records in DNS-only mode, and leaves your existing web stack alone.
+It keeps the proxy stack on separate ports, can use DNS-01 or your own existing certificates, writes Cloudflare DNS records in DNS-only mode, and leaves your existing web stack alone.
 
 ---
 
 ## Features
 
-- Deploys VLESS REALITY/XHTTP, VLESS TCP/TLS Vision, and Hysteria 2 in one run
+- Installs the two Xray lines by default and keeps Hysteria 2 optional
 - Works alongside 1Panel / OpenResty because it does not bind `80/tcp` or `443/tcp`
 - Detects public IPv4 / IPv6 and updates Cloudflare A / AAAA records
 - Forces Cloudflare records to DNS only / gray cloud
-- Issues and renews TLS certificates with acme.sh DNS-01
-- Supports Hysteria 2 UDP port hopping, defaulting to `40000-50000/udp`
+- Supports `acme`, `manual`, and `existing` certificate modes
+- Can optionally deploy a local camouflage site for Hysteria masquerade and reverse proxy fronting
+- Supports optional Hysteria 2 UDP port hopping, defaulting to `40000-50000/udp` when enabled
 - Persists UUIDs, REALITY keys, Hysteria passwords, REALITY SNI, and XHTTP path
 - Generates client output for common clients
 - Supports `cleanup`, `uninstall`, and `purge`
@@ -46,7 +47,38 @@ It keeps the proxy stack on separate ports, uses DNS-01 certificate issuance, wr
 |---|---:|---|---|---|
 | VLESS REALITY XHTTP | `24443/tcp` | XHTTP | REALITY | Main Xray fallback-resistant line |
 | VLESS TCP TLS Vision | `23333/tcp` | TCP | TLS + Vision flow | Additional Xray Vision line using the node certificate |
-| Hysteria 2 | `40000-50000/udp` | QUIC / UDP hopping | TLS + Salamander obfs | UDP-friendly high-throughput line |
+| Hysteria 2 | `40000-50000/udp` | QUIC / UDP hopping | TLS + Salamander obfs | Optional UDP-friendly high-throughput line |
+
+---
+
+## Camouflage Site
+
+The stack can optionally deploy a lightweight static camouflage site on local loopback. It is useful in two ways:
+
+- Hysteria 2 can use it as the masquerade target instead of relying on an external site
+- 1Panel or OpenResty can reverse proxy the same local site if you want a normal-looking web page on the domain
+
+Recommended settings:
+
+```bash
+ENABLE_CAMOUFLAGE_SITE="true"
+CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
+```
+
+When enabled, the installer starts a small `nginx:alpine` container and binds it to:
+
+```text
+127.0.0.1:18080
+```
+
+The default Hysteria masquerade target automatically becomes:
+
+```text
+http://127.0.0.1:18080/
+```
+
+This does not occupy public `80/tcp` or `443/tcp`. If you want visitors to see the site from the internet, point your existing 1Panel or OpenResty reverse proxy to the same local port.
 
 ---
 
@@ -68,7 +100,7 @@ VPS
 │  └─ 23333/tcp
 │     └─ VLESS + TCP + TLS + Vision
 │
-└─ Hysteria 2
+└─ Optional Hysteria 2
    └─ 40000-50000/udp
       └─ UDP port hopping
 ```
@@ -146,7 +178,13 @@ DEFAULT_XRAY_PORT="24443"
 DEFAULT_XRAY_VISION_PORT="23333"
 XRAY_RUN_UID="65532"
 XRAY_RUN_GID="65532"
+ENABLE_HYSTERIA="false"
 DEFAULT_HY2_PORT_RANGE="40000-50000"
+
+CERT_MODE="acme"
+ENABLE_CAMOUFLAGE_SITE="false"
+CAMOUFLAGE_SITE_PORT="18080"
+CAMOUFLAGE_SITE_TITLE="Regional Status Portal"
 
 ENABLE_IPV6="true"
 
@@ -181,7 +219,6 @@ Open these ports in your cloud security group:
 ```text
 24443/tcp
 23333/tcp
-40000-50000/udp
 ```
 
 If you use `ufw`:
@@ -189,8 +226,13 @@ If you use `ufw`:
 ```bash
 ufw allow 24443/tcp
 ufw allow 23333/tcp
-ufw allow 40000:50000/udp
 ufw status
+```
+
+If you explicitly enable Hysteria 2, also open:
+
+```text
+40000-50000/udp
 ```
 
 ### 4. Deploy
@@ -225,16 +267,16 @@ Main files:
 
 | Path | Description |
 |---|---|
-| `docker-compose.yml` | Xray and Hysteria 2 container definitions |
+| `docker-compose.yml` | Xray container definitions, plus optional Hysteria 2 and camouflage site services |
 | `xray/config.json` | Xray server config |
-| `hysteria/config.yaml` | Hysteria 2 server config |
+| `hysteria/config.yaml` | Hysteria 2 server config, generated only when enabled |
 | `certs/fullchain.pem` | acme.sh full certificate chain |
 | `certs/privkey.pem` | acme.sh private key |
 | `secrets.env` | UUIDs, REALITY keys, Hysteria passwords, and persisted node secrets |
-| `client-info.txt` | VLESS REALITY/XHTTP URI, VLESS TCP/TLS Vision URI, and Hysteria 2 share URI |
+| `client-info.txt` | VLESS REALITY/XHTTP URI, VLESS TCP/TLS Vision URI, and optional Hysteria 2 share URI |
 | `clash-client-info.txt` | Mihomo / Clash Meta proxy snippet |
-| `sing-box-client-info.json` | sing-box Hysteria 2 outbound snippet |
-| `clients/hysteria2-client.yaml` | Official Hysteria 2 client config |
+| `sing-box-client-info.json` | sing-box Hysteria 2 outbound snippet, generated only when enabled |
+| `clients/hysteria2-client.yaml` | Official Hysteria 2 client config, generated only when enabled |
 
 View client information:
 
@@ -268,13 +310,20 @@ Important environment variables:
 
 | Variable | Required | Default | Description |
 |---|---:|---|---|
-| `EMAIL` | yes | none | Email for acme.sh registration |
+| `EMAIL` | acme only | none | Email for acme.sh registration |
 | `CF_TOKEN` | yes | none | Cloudflare API token |
 | `DEFAULT_XRAY_PORT` | no | `24443` | Default VLESS REALITY/XHTTP TCP port |
 | `DEFAULT_XRAY_VISION_PORT` | no | `23333` | Default VLESS TCP/TLS Vision TCP port |
 | `XRAY_RUN_UID` | no | `65532` | Xray container UID and certificate key owner |
 | `XRAY_RUN_GID` | no | `65532` | Xray container GID and certificate key group |
+| `ENABLE_HYSTERIA` | no | `false` | Enable the Hysteria 2 service, client files, and UDP port guidance |
 | `DEFAULT_HY2_PORT_RANGE` | no | `40000-50000` | Default Hysteria 2 UDP port or range |
+| `CERT_MODE` | no | `acme` | Certificate source: `acme`, `manual`, or `existing` |
+| `TLS_CERT_FILE` | manual only | none | Source fullchain path copied when `CERT_MODE=manual` |
+| `TLS_KEY_FILE` | manual only | none | Source private key path copied when `CERT_MODE=manual` |
+| `ENABLE_CAMOUFLAGE_SITE` | no | `false` | Start a local camouflage site container and use it for Hysteria masquerade |
+| `CAMOUFLAGE_SITE_PORT` | no | `18080` | Loopback listen port for the camouflage site |
+| `CAMOUFLAGE_SITE_TITLE` | no | `<domain> Status Portal` | HTML title and hero text for the camouflage page |
 | `ENABLE_IPV6` | no | `true` | Create AAAA records when IPv6 is detected |
 | `PUBLIC_IPV4` | no | auto | Manually override detected IPv4 |
 | `PUBLIC_IPV6` | no | auto | Manually override detected IPv6 |
@@ -283,6 +332,41 @@ Important environment variables:
 | `REALITY_SNI` | no | random choice | Fixed REALITY server name |
 | `REALITY_TARGET` | no | `<REALITY_SNI>:443` | Fixed REALITY fallback target |
 | `REALITY_SNI_POOL` | no | built in | Candidate list used when `REALITY_SNI` is omitted |
+
+---
+
+## Certificate Modes
+
+The default mode is:
+
+```bash
+CERT_MODE="acme"
+```
+
+This uses acme.sh with Cloudflare DNS-01 and can renew certificates automatically.
+
+If DNS-01 propagation is unreliable, you can reuse certificates from another stack such as 1Panel or OpenResty:
+
+```bash
+CERT_MODE="manual"
+TLS_CERT_FILE="/path/to/fullchain.pem"
+TLS_KEY_FILE="/path/to/privkey.pem"
+```
+
+The installer copies those files into the node directory and applies permissions for Xray and Hysteria 2.
+
+If you already placed certificate files in the install directory, use:
+
+```bash
+CERT_MODE="existing"
+```
+
+Required files:
+
+```text
+/opt/proxy-stack-jp1-example-com/certs/fullchain.pem
+/opt/proxy-stack-jp1-example-com/certs/privkey.pem
+```
 
 ---
 
@@ -312,7 +396,7 @@ Only Xray:
 docker compose logs -f --tail=100 xray
 ```
 
-Only Hysteria 2:
+Only Hysteria 2, when enabled:
 
 ```bash
 docker compose logs -f --tail=100 hysteria

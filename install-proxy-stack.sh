@@ -17,7 +17,14 @@ DEFAULT_XRAY_PORT="${DEFAULT_XRAY_PORT:-24443}"
 DEFAULT_XRAY_VISION_PORT="${DEFAULT_XRAY_VISION_PORT:-23333}"
 XRAY_RUN_UID="${XRAY_RUN_UID:-65532}"
 XRAY_RUN_GID="${XRAY_RUN_GID:-65532}"
+ENABLE_HYSTERIA="${ENABLE_HYSTERIA:-false}"
 DEFAULT_HY2_PORT_RANGE="${DEFAULT_HY2_PORT_RANGE:-40000-50000}"
+CERT_MODE="${CERT_MODE:-acme}"
+TLS_CERT_FILE="${TLS_CERT_FILE:-}"
+TLS_KEY_FILE="${TLS_KEY_FILE:-}"
+ENABLE_CAMOUFLAGE_SITE="${ENABLE_CAMOUFLAGE_SITE:-false}"
+CAMOUFLAGE_SITE_PORT="${CAMOUFLAGE_SITE_PORT:-18080}"
+CAMOUFLAGE_SITE_TITLE="${CAMOUFLAGE_SITE_TITLE:-}"
 ENABLE_IPV6="${ENABLE_IPV6:-true}"
 HY2_BANDWIDTH_UP="${HY2_BANDWIDTH_UP:-1 gbps}"
 HY2_BANDWIDTH_DOWN="${HY2_BANDWIDTH_DOWN:-1 gbps}"
@@ -66,7 +73,14 @@ Optional environment variables:
   DEFAULT_XRAY_VISION_PORT="23333"
   XRAY_RUN_UID="65532"
   XRAY_RUN_GID="65532"
+  ENABLE_HYSTERIA="false"            # true/false
   DEFAULT_HY2_PORT_RANGE="40000-50000"
+  CERT_MODE="acme"                    # acme/manual/existing
+  TLS_CERT_FILE="/path/to/fullchain.pem"
+  TLS_KEY_FILE="/path/to/privkey.pem"
+  ENABLE_CAMOUFLAGE_SITE="false"      # true/false
+  CAMOUFLAGE_SITE_PORT="18080"
+  CAMOUFLAGE_SITE_TITLE="Example Status Portal"
   ENABLE_IPV6="true"                 # true/false; true means create AAAA when IPv6 is detected
   HY2_BANDWIDTH_UP="1 gbps"          # Hysteria 2 server-side upload cap per client
   HY2_BANDWIDTH_DOWN="1 gbps"        # Hysteria 2 server-side download cap per client
@@ -140,12 +154,19 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [ "$ACTION" = "install" ] && [ -z "${EMAIL:-}" ]; then
-  echo "缺少 EMAIL。请在 /root/proxy-global.env 里填写 EMAIL=\"你的邮箱\"" >&2
-  exit 1
+  if [ "$CERT_MODE" = "acme" ]; then
+    echo "缺少 EMAIL。请在 /root/proxy-global.env 里填写 EMAIL=\"你的邮箱\"，或设置 CERT_MODE=\"manual\"/\"existing\" 跳过 acme.sh" >&2
+    exit 1
+  fi
 fi
 
 if [ "$ACTION" = "install" ] && [ -z "${CF_TOKEN:-}" ]; then
   echo "缺少 CF_TOKEN。请在 /root/proxy-global.env 里填写 CF_TOKEN=\"Cloudflare API Token\"" >&2
+  exit 1
+fi
+
+if [ "$ACTION" = "install" ] && [ "$CERT_MODE" != "acme" ] && [ "$CERT_MODE" != "manual" ] && [ "$CERT_MODE" != "existing" ]; then
+  echo "CERT_MODE 不正确: ${CERT_MODE}。可选值: acme, manual, existing" >&2
   exit 1
 fi
 
@@ -179,6 +200,25 @@ if action == "install":
     if not (1 <= a <= b <= 65535):
         raise SystemExit(f"Hysteria 端口或范围不正确: {hy2_range}")
 PY
+fi
+
+if [ "$ACTION" = "install" ]; then
+  case "$ENABLE_HYSTERIA" in
+    true|false|0|1)
+      ;;
+    *)
+      echo "ENABLE_HYSTERIA 不正确: ${ENABLE_HYSTERIA}。可选值: true, false, 0, 1" >&2
+      exit 1
+      ;;
+  esac
+  case "$ENABLE_CAMOUFLAGE_SITE" in
+    true|false|0|1)
+      ;;
+    *)
+      echo "ENABLE_CAMOUFLAGE_SITE 不正确: ${ENABLE_CAMOUFLAGE_SITE}。可选值: true, false, 0, 1" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 log() {
@@ -392,6 +432,205 @@ regenerate_broken_secrets_if_needed() {
   REALITY_SNI_CHOSEN="${REALITY_SNI_CHOSEN:-$(choose_reality_sni)}"
   REALITY_TARGET_CHOSEN="${REALITY_TARGET_CHOSEN:-$(choose_reality_target "$REALITY_SNI_CHOSEN")}"
   write_secrets_file
+}
+
+apply_tls_cert_permissions() {
+  chown "${XRAY_RUN_UID}:${XRAY_RUN_GID}" "${INSTALL_DIR}/certs/fullchain.pem" "${INSTALL_DIR}/certs/privkey.pem"
+  chmod 644 "${INSTALL_DIR}/certs/fullchain.pem"
+  chmod 640 "${INSTALL_DIR}/certs/privkey.pem"
+}
+
+write_camouflage_site_files() {
+  cat > "${INSTALL_DIR}/camouflage-site/index.html" <<SITE
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${CAMOUFLAGE_SITE_TITLE}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef4f8;
+      --panel: rgba(255, 255, 255, 0.82);
+      --ink: #10212b;
+      --muted: #4d6574;
+      --line: rgba(16, 33, 43, 0.12);
+      --accent: #0f7a6c;
+      --accent-soft: rgba(15, 122, 108, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 122, 108, 0.18), transparent 32%),
+        radial-gradient(circle at bottom right, rgba(33, 91, 160, 0.16), transparent 36%),
+        linear-gradient(160deg, #edf5f8 0%, #dfe9ee 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+    }
+    .shell {
+      width: min(960px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: 0 18px 60px rgba(16, 33, 43, 0.12);
+      backdrop-filter: blur(16px);
+    }
+    .hero {
+      padding: 28px 28px 18px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(135deg, rgba(255,255,255,0.78), rgba(242,248,250,0.94));
+    }
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 16px 0 10px;
+      font-size: clamp(34px, 6vw, 52px);
+      line-height: 1.05;
+      font-weight: 700;
+    }
+    p {
+      margin: 0;
+      max-width: 720px;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 16px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      padding: 24px 28px 32px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.86);
+      padding: 18px;
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .metric {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.1;
+      margin-bottom: 8px;
+    }
+    .small {
+      font-size: 14px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <span class="eyebrow">Regional Network Operations</span>
+      <h1>${CAMOUFLAGE_SITE_TITLE}</h1>
+      <p>
+        This portal provides general service health visibility for regional edge capacity,
+        scheduled maintenance windows, and transport availability. Public dashboards and
+        status notices are published here before wider distribution.
+      </p>
+    </section>
+    <section class="grid">
+      <article class="card">
+        <h2>Availability</h2>
+        <div class="metric">99.98%</div>
+        <div class="small">Rolling 30-day regional service availability</div>
+      </article>
+      <article class="card">
+        <h2>Maintenance Window</h2>
+        <div class="metric">02:00 UTC</div>
+        <div class="small">Standard low-impact change window for transport upgrades</div>
+      </article>
+      <article class="card">
+        <h2>Edge Regions</h2>
+        <div class="metric">12</div>
+        <div class="small">Active regions participating in the current release ring</div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
+SITE
+}
+
+install_tls_certificate() {
+  case "$CERT_MODE" in
+    acme)
+      log "安装/配置 acme.sh 并签发证书"
+      if [ ! -x "$HOME/.acme.sh/acme.sh" ]; then
+        curl https://get.acme.sh | sh -s email="$EMAIL"
+      fi
+
+      ACME="$HOME/.acme.sh/acme.sh"
+      export CF_Token="$CF_TOKEN"
+      "$ACME" --set-default-ca --server letsencrypt
+
+      ACME_CERT_DIR="$HOME/.acme.sh/${DOMAIN}_ecc"
+      if [ ! -f "${ACME_CERT_DIR}/${DOMAIN}.cer" ]; then
+        "$ACME" --issue --dns dns_cf -d "$DOMAIN" --keylength ec-256
+      else
+        echo "检测到 acme.sh 已有证书，跳过重新签发"
+      fi
+
+      "$ACME" --install-cert -d "$DOMAIN" --ecc \
+        --fullchain-file "${INSTALL_DIR}/certs/fullchain.pem" \
+        --key-file "${INSTALL_DIR}/certs/privkey.pem" \
+        --reloadcmd "chown ${XRAY_RUN_UID}:${XRAY_RUN_GID} ${INSTALL_DIR}/certs/fullchain.pem ${INSTALL_DIR}/certs/privkey.pem && chmod 644 ${INSTALL_DIR}/certs/fullchain.pem && chmod 640 ${INSTALL_DIR}/certs/privkey.pem && cd ${INSTALL_DIR} && docker compose restart ${TLS_RELOAD_SERVICES} >/dev/null 2>&1 || true"
+      ;;
+    manual)
+      log "使用手动指定的 TLS 证书"
+      if [ -z "$TLS_CERT_FILE" ] || [ -z "$TLS_KEY_FILE" ]; then
+        echo "CERT_MODE=manual 时必须设置 TLS_CERT_FILE 和 TLS_KEY_FILE" >&2
+        exit 1
+      fi
+      if [ ! -f "$TLS_CERT_FILE" ]; then
+        echo "TLS_CERT_FILE 不存在: ${TLS_CERT_FILE}" >&2
+        exit 1
+      fi
+      if [ ! -f "$TLS_KEY_FILE" ]; then
+        echo "TLS_KEY_FILE 不存在: ${TLS_KEY_FILE}" >&2
+        exit 1
+      fi
+      install -m 644 "$TLS_CERT_FILE" "${INSTALL_DIR}/certs/fullchain.pem"
+      install -m 640 "$TLS_KEY_FILE" "${INSTALL_DIR}/certs/privkey.pem"
+      ;;
+    existing)
+      log "复用安装目录中已有 TLS 证书"
+      if [ ! -f "${INSTALL_DIR}/certs/fullchain.pem" ] || [ ! -f "${INSTALL_DIR}/certs/privkey.pem" ]; then
+        echo "CERT_MODE=existing 需要提前准备:" >&2
+        echo "  ${INSTALL_DIR}/certs/fullchain.pem" >&2
+        echo "  ${INSTALL_DIR}/certs/privkey.pem" >&2
+        exit 1
+      fi
+      ;;
+  esac
+
+  apply_tls_cert_permissions
 }
 
 download_remote_script() {
@@ -704,12 +943,27 @@ else
 fi
 
 log "创建目录"
-mkdir -p "${INSTALL_DIR}/xray" "${INSTALL_DIR}/hysteria" "${INSTALL_DIR}/certs" "${INSTALL_DIR}/clients"
+mkdir -p "${INSTALL_DIR}/xray" "${INSTALL_DIR}/hysteria" "${INSTALL_DIR}/certs" "${INSTALL_DIR}/clients" "${INSTALL_DIR}/camouflage-site"
 chmod 700 "${INSTALL_DIR}"
 
 echo "INSTALL_DIR=${INSTALL_DIR}"
 
-apply_hysteria_sysctl_tuning
+if [ -z "$CAMOUFLAGE_SITE_TITLE" ]; then
+  CAMOUFLAGE_SITE_TITLE="${DOMAIN} Status Portal"
+fi
+TLS_RELOAD_SERVICES="xray"
+if [ "$ENABLE_HYSTERIA" = "true" ] || [ "$ENABLE_HYSTERIA" = "1" ]; then
+  TLS_RELOAD_SERVICES="xray hysteria"
+fi
+if [ "$ENABLE_CAMOUFLAGE_SITE" = "true" ] || [ "$ENABLE_CAMOUFLAGE_SITE" = "1" ]; then
+  MASQUERADE_URL="${MASQUERADE_URL:-http://127.0.0.1:${CAMOUFLAGE_SITE_PORT}/}"
+else
+  MASQUERADE_URL="${MASQUERADE_URL:-https://${DOMAIN}/}"
+fi
+
+if [ "$ENABLE_HYSTERIA" = "true" ] || [ "$ENABLE_HYSTERIA" = "1" ]; then
+  apply_hysteria_sysctl_tuning
+fi
 
 log "生成或复用密钥与 REALITY 目标"
 if [ ! -f "$SECRETS_FILE" ]; then
@@ -747,30 +1001,11 @@ REALITY_TARGET="$REALITY_TARGET_CHOSEN"
 echo "REALITY_TARGET=${REALITY_TARGET}"
 echo "REALITY_SNI=${REALITY_SNI}"
 
-log "安装/配置 acme.sh 并签发证书"
-if [ ! -x "$HOME/.acme.sh/acme.sh" ]; then
-  curl https://get.acme.sh | sh -s email="$EMAIL"
+install_tls_certificate
+if [ "$ENABLE_CAMOUFLAGE_SITE" = "true" ] || [ "$ENABLE_CAMOUFLAGE_SITE" = "1" ]; then
+  log "写入伪装站点文件"
+  write_camouflage_site_files
 fi
-
-ACME="$HOME/.acme.sh/acme.sh"
-export CF_Token="$CF_TOKEN"
-"$ACME" --set-default-ca --server letsencrypt
-
-ACME_CERT_DIR="$HOME/.acme.sh/${DOMAIN}_ecc"
-if [ ! -f "${ACME_CERT_DIR}/${DOMAIN}.cer" ]; then
-  "$ACME" --issue --dns dns_cf -d "$DOMAIN" --keylength ec-256
-else
-  echo "检测到 acme.sh 已有证书，跳过重新签发"
-fi
-
-"$ACME" --install-cert -d "$DOMAIN" --ecc \
-  --fullchain-file "${INSTALL_DIR}/certs/fullchain.pem" \
-  --key-file "${INSTALL_DIR}/certs/privkey.pem" \
-  --reloadcmd "chown ${XRAY_RUN_UID}:${XRAY_RUN_GID} ${INSTALL_DIR}/certs/fullchain.pem ${INSTALL_DIR}/certs/privkey.pem && chmod 644 ${INSTALL_DIR}/certs/fullchain.pem && chmod 640 ${INSTALL_DIR}/certs/privkey.pem && cd ${INSTALL_DIR} && docker compose restart xray hysteria >/dev/null 2>&1 || true"
-
-chown "${XRAY_RUN_UID}:${XRAY_RUN_GID}" "${INSTALL_DIR}/certs/fullchain.pem" "${INSTALL_DIR}/certs/privkey.pem"
-chmod 644 "${INSTALL_DIR}/certs/fullchain.pem"
-chmod 640 "${INSTALL_DIR}/certs/privkey.pem"
 
 log "写入 docker-compose.yml"
 cat > "${INSTALL_DIR}/docker-compose.yml" <<COMPOSE
@@ -785,6 +1020,9 @@ services:
       - ./xray/config.json:/etc/xray/config.json:ro
       - ./certs:/certs:ro
     command: ["run", "-config", "/etc/xray/config.json"]
+COMPOSE
+if [ "$ENABLE_HYSTERIA" = "true" ] || [ "$ENABLE_HYSTERIA" = "1" ]; then
+  cat >> "${INSTALL_DIR}/docker-compose.yml" <<COMPOSE
 
   hysteria:
     image: tobyxdd/hysteria:latest
@@ -798,6 +1036,20 @@ services:
       - ./certs:/certs:ro
     command: ["server", "-c", "/etc/hysteria.yaml"]
 COMPOSE
+fi
+if [ "$ENABLE_CAMOUFLAGE_SITE" = "true" ] || [ "$ENABLE_CAMOUFLAGE_SITE" = "1" ]; then
+  cat >> "${INSTALL_DIR}/docker-compose.yml" <<COMPOSE
+
+  camouflage-site:
+    image: nginx:alpine
+    container_name: camouflage-site-${SAFE_DOMAIN}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CAMOUFLAGE_SITE_PORT}:80"
+    volumes:
+      - ./camouflage-site/index.html:/usr/share/nginx/html/index.html:ro
+COMPOSE
+fi
 
 log "写入 Xray 配置"
 cat > "${INSTALL_DIR}/xray/config.json" <<XRAY
@@ -899,6 +1151,20 @@ cat > "${INSTALL_DIR}/xray/config.json" <<XRAY
 }
 XRAY
 
+PY_URLENCODED_PATH="$(python3 - <<PY
+from urllib.parse import quote
+print(quote("${XHTTP_PATH}", safe=''))
+PY
+)"
+TAG="${DOMAIN}-vless-reality-xhttp"
+VLESS_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${PY_URLENCODED_PATH}#${TAG}"
+VLESS_VISION_TAG="${DOMAIN}-vless-tcp-tls-vision"
+VLESS_VISION_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_VISION_PORT}?encryption=none&security=tls&fp=chrome&type=tcp&host=${DOMAIN}&headerType=none&sni=${DOMAIN}&flow=xtls-rprx-vision#${VLESS_VISION_TAG}"
+CLASH_VLESS_NAME="${DOMAIN}-vless-reality-xhttp"
+CLASH_VISION_NAME="${DOMAIN}-vless-tcp-tls-vision"
+CLASH_HY2_NAME="${DOMAIN}-hysteria2"
+
+if [ "$ENABLE_HYSTERIA" = "true" ] || [ "$ENABLE_HYSTERIA" = "1" ]; then
 log "写入 Hysteria 2 配置"
 cat > "${INSTALL_DIR}/hysteria/config.yaml" <<HY2
 listen: :${HY2_PORT_RANGE}
@@ -939,7 +1205,6 @@ HY2
 log "生成客户端配置说明"
 PY_URI_FIELDS="$(python3 - <<PY
 from urllib.parse import quote
-print(quote("${XHTTP_PATH}", safe=''))
 print(quote("${HY2_PASSWORD}", safe=''))
 print(quote("${HY2_OBFS_PASSWORD}", safe=''))
 print(quote("${DOMAIN}-hysteria2", safe=''))
@@ -993,10 +1258,9 @@ for raw in sys.argv[1:]:
     print(to_human(mbps))
 PY
 )"
-PY_URLENCODED_PATH="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '1p')"
-HY2_AUTH_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '2p')"
-HY2_OBFS_PASSWORD_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '3p')"
-HY2_TAG_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '4p')"
+HY2_AUTH_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '1p')"
+HY2_OBFS_PASSWORD_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '2p')"
+HY2_TAG_ENCODED="$(printf '%s\n' "$PY_URI_FIELDS" | sed -n '3p')"
 HY2_CLIENT_UP_MBPS="$(printf '%s\n' "$PY_HY2_BANDWIDTH_FIELDS" | sed -n '1p')"
 HY2_CLIENT_UP_HUMAN="$(printf '%s\n' "$PY_HY2_BANDWIDTH_FIELDS" | sed -n '2p')"
 HY2_CLIENT_DOWN_MBPS="$(printf '%s\n' "$PY_HY2_BANDWIDTH_FIELDS" | sed -n '3p')"
@@ -1016,15 +1280,8 @@ port: ${HY2_URI_PORT}
 PORTS
 )"
 fi
-TAG="${DOMAIN}-vless-reality-xhttp"
-VLESS_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${PY_URLENCODED_PATH}#${TAG}"
-VLESS_VISION_TAG="${DOMAIN}-vless-tcp-tls-vision"
-VLESS_VISION_URI="vless://${XRAY_UUID}@${DOMAIN}:${XRAY_VISION_PORT}?encryption=none&security=tls&fp=chrome&type=tcp&host=${DOMAIN}&headerType=none&sni=${DOMAIN}&flow=xtls-rprx-vision#${VLESS_VISION_TAG}"
 HY2_URI_BASE="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_PORT_RANGE}/?sni=${DOMAIN}&insecure=0&obfs=salamander&obfs-password=${HY2_OBFS_PASSWORD_ENCODED}"
 HY2_SHARE_URI="hysteria2://${HY2_AUTH_ENCODED}@${DOMAIN}:${HY2_URI_PORT}?${HY2_SHARE_QUERY}#${HY2_TAG_ENCODED}"
-CLASH_VLESS_NAME="${DOMAIN}-vless-reality-xhttp"
-CLASH_VISION_NAME="${DOMAIN}-vless-tcp-tls-vision"
-CLASH_HY2_NAME="${DOMAIN}-hysteria2"
 
 cat > "${INSTALL_DIR}/clients/hysteria2-client.yaml" <<HY2CLIENT
 server: "${HY2_URI_BASE}"
@@ -1138,6 +1395,41 @@ cat >> "${INSTALL_DIR}/clash-client-info.txt" <<CLASH
     up: "${HY2_CLIENT_UP_HUMAN}"
     down: "${HY2_CLIENT_DOWN_HUMAN}"
 CLASH
+else
+cat > "${INSTALL_DIR}/clash-client-info.txt" <<CLASH
+proxies:
+  - name: "${CLASH_VLESS_NAME}"
+    type: vless
+    server: ${DOMAIN}
+    port: ${XRAY_PORT}
+    udp: true
+    uuid: ${XRAY_UUID}
+    tls: true
+    servername: ${REALITY_SNI}
+    client-fingerprint: chrome
+    skip-cert-verify: false
+    reality-opts:
+      public-key: ${REALITY_PUBLIC_KEY}
+      short-id: ${SHORT_ID}
+    network: xhttp
+    xhttp-opts:
+      path: ${XHTTP_PATH}
+      mode: auto
+
+  - name: "${CLASH_VISION_NAME}"
+    type: vless
+    server: ${DOMAIN}
+    port: ${XRAY_VISION_PORT}
+    udp: true
+    uuid: ${XRAY_UUID}
+    tls: true
+    servername: ${DOMAIN}
+    client-fingerprint: chrome
+    skip-cert-verify: false
+    network: tcp
+    flow: xtls-rprx-vision
+CLASH
+fi
 
 cat > "${INSTALL_DIR}/client-info.txt" <<INFO
 ========== Basic ==========
@@ -1147,7 +1439,9 @@ Public IPv4: ${PUBLIC_IPV4:-none}
 Public IPv6: ${PUBLIC_IPV6:-none}
 Cloudflare Zone: ${ZONE_NAME}
 DNS mode: DNS only / gray cloud
+Hysteria enabled: ${ENABLE_HYSTERIA}
 Hysteria masquerade URL: ${MASQUERADE_URL}
+Camouflage site enabled: ${ENABLE_CAMOUFLAGE_SITE}
 
 ========== VLESS + REALITY + XHTTP ==========
 Address: ${DOMAIN}
@@ -1179,6 +1473,9 @@ Flow: xtls-rprx-vision
 
 VLESS URI:
 ${VLESS_VISION_URI}
+INFO
+if [ "$ENABLE_HYSTERIA" = "true" ] || [ "$ENABLE_HYSTERIA" = "1" ]; then
+  cat >> "${INSTALL_DIR}/client-info.txt" <<INFO
 
 ========== Hysteria 2 ==========
 Server: ${DOMAIN}:${HY2_PORT_RANGE}
@@ -1193,6 +1490,15 @@ Hysteria 2 Official Client YAML: ${INSTALL_DIR}/clients/hysteria2-client.yaml
 Sing-box JSON: ${INSTALL_DIR}/sing-box-client-info.json
 Clash / Mihomo YAML: ${INSTALL_DIR}/clash-client-info.txt
 Applied sysctl tuning: net.core.rmem_max=${HY2_SYSCTL_RMEM_MAX}, net.core.wmem_max=${HY2_SYSCTL_WMEM_MAX}
+INFO
+  chmod 600 "${INSTALL_DIR}/client-info.txt" "${INSTALL_DIR}/clients/hysteria2-client.yaml" "${INSTALL_DIR}/clash-client-info.txt" "${INSTALL_DIR}/sing-box-client-info.json"
+else
+  rm -f "${INSTALL_DIR}/hysteria/config.yaml" "${INSTALL_DIR}/clients/hysteria2-client.yaml" "${INSTALL_DIR}/sing-box-client-info.json"
+  chmod 600 "${INSTALL_DIR}/client-info.txt" "${INSTALL_DIR}/clash-client-info.txt"
+fi
+cat >> "${INSTALL_DIR}/client-info.txt" <<INFO
+
+Camouflage site local URL: http://127.0.0.1:${CAMOUFLAGE_SITE_PORT}/
 
 ========== Useful Commands ==========
 cd ${INSTALL_DIR} && docker compose ps
@@ -1200,7 +1506,6 @@ cd ${INSTALL_DIR} && docker compose logs -f --tail=100
 cd ${INSTALL_DIR} && docker compose pull && docker compose up -d
 cat ${INSTALL_DIR}/client-info.txt
 INFO
-chmod 600 "${INSTALL_DIR}/client-info.txt" "${INSTALL_DIR}/clients/hysteria2-client.yaml" "${INSTALL_DIR}/clash-client-info.txt" "${INSTALL_DIR}/sing-box-client-info.json"
 
 log "启动服务"
 cd "$INSTALL_DIR"
@@ -1217,12 +1522,16 @@ echo
 echo "部署完成。请确认 VPS 防火墙/安全组已放行："
 echo "  TCP ${XRAY_PORT}"
 echo "  TCP ${XRAY_VISION_PORT}"
-echo "  UDP ${HY2_PORT_RANGE}"
+if [ "$ENABLE_HYSTERIA" = "true" ] || [ "$ENABLE_HYSTERIA" = "1" ]; then
+  echo "  UDP ${HY2_PORT_RANGE}"
+fi
 echo
 echo "如果使用 ufw，可以参考："
 echo "  ufw allow ${XRAY_PORT}/tcp"
 echo "  ufw allow ${XRAY_VISION_PORT}/tcp"
-echo "  ufw allow ${HY2_UFW_PORT_SPEC}/udp"
+if [ "$ENABLE_HYSTERIA" = "true" ] || [ "$ENABLE_HYSTERIA" = "1" ]; then
+  echo "  ufw allow ${HY2_UFW_PORT_SPEC}/udp"
+fi
 echo
 echo "IPv6 说明："
 echo "  如果已检测到 Public IPv6，脚本已同步 AAAA 记录；请确认 VPS 安全组和系统防火墙同样允许 IPv6 入站。"
